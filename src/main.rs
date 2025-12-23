@@ -1,5 +1,7 @@
 
 pub mod hnefatafl;
+pub mod zobrist;
+
 use hnefatafl::GameState;
 
 fn main() {
