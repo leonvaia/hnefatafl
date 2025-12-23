@@ -226,8 +226,81 @@ impl GameState {
         while self.history.len() > REPS {
             self.history.pop_front();
         }
+
+        self.apply_captures(er, ec);
     }
 
+    pub fn apply_captures(&mut self, row: usize, col: usize) {
+        let mover = self.board[row][col];
+
+        // Only attackers or defenders can capture
+        if mover == '.' || mover == 'K' { return; }
+
+        let enemy = match mover {
+            'B' => 'W',
+            'W' => 'B',
+            _ => return,
+        };
+
+        // Four orthogonal directions
+        let directions = [
+            (-1,  0), // north
+            ( 1,  0), // south
+            ( 0, -1), // west
+            ( 0,  1), // east
+        ];
+
+        for (dr, dc) in directions {
+            let er = row as isize + dr;
+            let ec = col as isize + dc;
+
+            // Adjacent square must contain an enemy
+            if er < 0 || er > 6 || ec < 0 || ec > 6 { continue; }
+
+            let er = er as usize;
+            let ec = ec as usize;
+
+            if self.board[er][ec] != enemy { continue; }
+
+            // Square beyond the enemy
+            let br = er as isize + dr;
+            let bc = ec as isize + dc;
+
+            let is_captured = if br < 0 || br > 6 || bc < 0 || bc > 6 {
+                false
+            } else {
+                let br = br as usize;
+                let bc = bc as usize;
+
+                self.is_hostile_square(br, bc, enemy)
+            };
+
+            if is_captured {
+                self.board[er][ec] = '.';
+            }
+        }
+    }
+
+    fn is_hostile_square(&self, row: usize, col: usize, victim: char) -> bool {
+        let square = self.board[row][col];
+
+        // Enemy piece is always hostile
+        if square != '.' && square != victim && square != 'K' { return true; }
+
+        // Corners are hostile to everyone
+        if (row == 0 || row == 6) && (col == 0 || col == 6) { return true; }
+
+        // Throne rules
+        if row == 3 && col == 3 {
+            match victim {
+                'B' => true,               // throne always hostile to black
+                'W' => square == '.',      // hostile to white only if empty
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
 
     /// Check if the move is valid for the *current* player. (Kept for CLI use.)
     pub fn move_is_valid(&self, coords: &[usize; 4]) -> bool {
