@@ -62,20 +62,7 @@ impl GameState {
         gs
     }
 
-    /// Serialize board and player to a small string for history comparisons.
-    fn serialize_state(&self) -> String {
-        let mut s = String::with_capacity(1 + 7*7);
-        s.push(self.player);
-        s.push('|');
-        for row in &self.board {
-            for &c in row {
-                s.push(c);
-            }
-        }
-        s
-    }
-
-    /// Display game board in ASCII art.
+    // Display game board in ASCII art.
     pub fn display(&self) {
         for (i, row) in self.board.iter().enumerate() {
             print!("{}", i);
@@ -87,13 +74,13 @@ impl GameState {
         println!("  0 1 2 3 4 5 6");
     }
 
-    /// Check if game is over.
-    /// Returns:
-    /// None - Game is not over
-    /// W - White wins
-    /// B - Black wins
-    /// D - Draw
-    /// E - Error
+    // Check if game is over.
+    // Returns:
+    // None - Game is not over
+    // W - White wins
+    // B - Black wins
+    // D - Draw
+    // E - Error
     pub fn check_game_over(&self) -> Option<char> {
         // === Check if King is at a corner -> White wins ===
         let corners = [(0,0), (0,6), (6,0), (6,6)];
@@ -195,12 +182,12 @@ impl GameState {
         None
     }
 
-    /// Move piece on the board and record history.
-    /// The logic expects the array to contain:
-    /// 0 -> start_row
-    /// 1 -> start_col
-    /// 2 -> end_row
-    /// 3 -> end_col
+    // Move piece on the board and record history.
+    // The logic expects the array to contain:
+    // 0 -> start_row
+    // 1 -> start_col
+    // 2 -> end_row
+    // 3 -> end_col
     pub fn move_piece(&mut self, coords: &[usize; 4]) {
         let (sr, sc, er, ec) = (coords[0], coords[1], coords[2], coords[3]);
         let piece = self.board[sr][sc];
@@ -302,12 +289,12 @@ impl GameState {
         }
     }
 
-    /// Check if the move is valid for the *current* player. (Kept for CLI use.)
+    // Check if the move is valid for the *current* player. (Kept for CLI use.)
     pub fn move_is_valid(&self, coords: &[usize; 4]) -> bool {
         self.move_is_valid_for(coords, self.player)
     }
 
-    /// Move validity but for a given player (so we can generate moves without mutating player).
+    // Move validity but for a given player (so we can generate moves without mutating player).
     pub fn move_is_valid_for(&self, coords: &[usize; 4], player: char) -> bool {
         // start != end
         if coords[0] == coords[2] && coords[1] == coords[3] {
@@ -384,7 +371,7 @@ impl GameState {
         true
     }
 
-    /// Return true if the given player has at least one legal move.
+    // Return true if the given player has at least one legal move.
     pub fn has_any_valid_move(&self, player: char) -> bool {
         for r in 0..7 {
             for c in 0..7 {
@@ -431,9 +418,9 @@ impl GameState {
         false
     }
 
-    /// Simple heuristic for rule 10: declare draw if both sides have very few pieces left.
-    /// Copenhagen: "If it is not possible to end the game, fx. because both sides have too few pieces left, it is a draw."
-    /// This rule is intentionally vague; adjust DRAW_PIECE_THRESHOLD as desired.
+    // Simple heuristic for rule 10: declare draw if both sides have very few pieces left.
+    // Copenhagen: "If it is not possible to end the game, fx. because both sides have too few pieces left, it is a draw."
+    // This rule is intentionally vague; adjust DRAW_PIECE_THRESHOLD as desired.
     fn is_insufficient_material_draw(&self) -> bool {
         const DRAW_PIECE_THRESHOLD: usize = 1; // <= 1 attackers AND <=1 defenders => draw
         let mut attackers = 0usize;
@@ -450,7 +437,7 @@ impl GameState {
         attackers <= DRAW_PIECE_THRESHOLD+1 && defenders <= DRAW_PIECE_THRESHOLD
     }
 
-    /// Gets a move from CLI. If valid then moves the piece.
+    // Gets a move from CLI. If valid then moves the piece.
     pub fn get_human_move(&mut self) {
         loop {
             println!("\nCurrent Player: {}", self.player);
