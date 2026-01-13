@@ -1,11 +1,16 @@
+/// Zobrist hashing.
+
 use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
 
+// Padded to 4 (power of 2) to ensure 32-byte alignment per cell,
+// preventing cache line splits and allowing bit-shift indexing.
+const PIECE_TYPES: usize = 4; // B, W, K, padding.
 const BOARD_SIZE: usize = 7;
-const PIECE_TYPES: usize = 3; // B, W, K
 
 #[derive(Clone)]
 pub struct Zobrist {
+    // 7 * 7 * 4 * 8 bytes = 1568 bytes (Fits in L1 Cache)
     pub table: [[[u64; PIECE_TYPES]; BOARD_SIZE]; BOARD_SIZE],
     pub black_to_move: u64,
 }
