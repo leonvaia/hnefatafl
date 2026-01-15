@@ -1,3 +1,5 @@
+/// MCTS algorithm.
+
 use rand::thread_rng;
 use rand:prelude::*;
 
@@ -35,7 +37,7 @@ impl MCTS {
     }
 
     #[inline]
-    fn update_generation(&self) {
+    fn increase_generation(&self) {
         self.generation += 1;
         if self.generation > self.iterations_per_move {
             self.generation_bound += 1;
@@ -44,7 +46,7 @@ impl MCTS {
 }
 
 /// ======================
-/// === MCTS Algorithm ===
+///     MCTS Algorithm
 /// ======================
 impl MCTS {
     pub fn get_move(&self, root: GameState) {
@@ -61,7 +63,7 @@ impl MCTS {
         bucket.add_entry(root.hash, self.generation, self.generation_bound);
         // Root cannot have 0 visits because the first UCB value would be NaN.
         if let Some(root_entry) = bucket.get_entry(root.hash) {
-            if root_entry.n_visits == 0 { root_entry.n_visits = 1; }
+            if root_entry.get_n_visits() == 0 { root_entry.set_n_visits(1); }
         } else {
             println!("Error: root not added to transpositions table.");
         }
@@ -75,7 +77,7 @@ impl MCTS {
     ///  1 if state.player won.
     /// -1 if state.player lost.
     ///  0 if it was a draw.
-    fn selection(&mut self, state: &GameState, current_hash: u64, node_visits: u32) -> i32 {
+    fn selection(&mut self, state: &GameState, current_hash: u64, node_visits: u32) -> isize {
         // === TERMINAL CHECKS ===
         // If game is over.
         if let Some(winner) = state.check_game_over() {
@@ -111,13 +113,13 @@ impl MCTS {
                 // Try to retrieve the child from the Transposition Table.
                 let child_bucket = self.transpositions.get_bucket(child_hash);
                 let mut is_visited = false;
-                let mut child_visits = 0u32;
-                let mut child_wins = 0i32;
+                let mut child_visits = 0usize;
+                let mut child_wins = 0isize;
                 if let Some(entry) = self.transpositions.get_entry(child_hash) {
-                    if entry.n_visits > 0 {
+                    if entry.get_n_visits() > 0 {
                         is_visited = true;
-                        child_visits = entry.n_visits;
-                        child_wins = entry.n_wins;
+                        child_visits = entry.get_n_visits();
+                        child_wins = entry.get_n_wins();
                     }
                 }
 
@@ -166,7 +168,7 @@ impl MCTS {
         // === EXECUTE MOVE ===
         let next_state = state.clone();
         next_state.move_piece(&selected_move, &self.zobrist);
-        let result_for_current_node: i32;
+        let result_for_current_node: isize;
 
         if is_expansion_phase {
             // === EXPANSION ===
@@ -187,9 +189,9 @@ impl MCTS {
         {
             let bucket = self.transpositions.get_bucket(selected_hash);
             if let Some(entry) = bucket.get_entry(root.hash) {
-                entry.generation += self.generation;
-                entry.n_visits += 1;
-                entry.n_wins += result_for_current_node;
+                entry.set_generation(self.generation);
+                entry.add_n_visits(1);
+                entry.add_n_wins(result_for_current_node);
             } else {
                 println!("Error: Entry wasn't found during backpropagation.");
                 println!("This means there is a problem with the overwriting policy.");
@@ -202,7 +204,7 @@ impl MCTS {
 
     /// SIMULATION.
     /// Returns the result with the perspective of state.player
-    fn simulation(&self, state: &GameState) -> i32 {
+    fn simulation(&self, state: &GameState) -> isize {
         let mut temp_state = state.clone();
         let mut moves = Vec::with_capacity(MAX_MOVES);
         let mut rng = thread_rng();
@@ -220,6 +222,7 @@ impl MCTS {
             temp_state.get_legal_moves(&moves);
             if moves.is_empty() {
                 println!("Error: Simulation step has no moves but game over wasn't caught.");
+                println!("Applying rule 9 anyways...\n");
                 // Current player loses (Rule 9: If a player cannot move, he loses the game).
                 if state.player == temp_state.player { return -1; }
                 else { return 1; }
