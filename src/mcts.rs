@@ -1,27 +1,37 @@
-/// MCTS algorithm.
+//! MCTS algorithm.
+
+//! IMPORTANT: To be sure the program doesn't get to an overflow, make sure the
+//! following condition is true:
+//! 2^VISITS_BITS > 2^GEN_BITS * iterations_per_move
 
 use rand::thread_rng;
-use rand:prelude::*;
+use rand::prelude::*;
 
 use crate::zobrist::Zobrist;
 use crate::transposition::TT;
 use crate::hnefatafl::GameState;
 
-// Maximum number of moves (estimated). Used to allocate the vector of legal moves efficiently.
+/// Maximum number of generations (to prevent data corruption) according to current bit layout.
+const MAX_GEN: usize = 1 << 15; // = 2^GEN_BITS
+
+/// Maximum number of moves (estimated). Used to allocate the vector of legal moves efficiently.
 const MAX_MOVES: usize = 128;
 
 pub struct MCTS {
     // Configuration.
-    pub iterations_per_move: u32, // == generation_range
-    pub ucb_const: f64,
+    iterations_per_move: u32, // == generation_range
+    ucb_const: f64,
     
     // Used to age out old TT entries.
-    pub generation: u32,
-    pub generation_bound: u32, // == generation - generation_range
+    generation: u32,
+    generation_bound: u32, // == generation - generation_range
 
     // Heavy data structures.
-    pub transpositions: TT,
-    pub zobrist: Zobrist,
+    transpositions: TT,
+    zobrist: Zobrist,
+
+    // Evaluation.
+    collisions: usize,
 }
 
 impl MCTS {
@@ -33,15 +43,24 @@ impl MCTS {
             generation_bound: 0,
             transpositions: TT::new(),
             zobrist: Zobrist::new(seed),
+            collisions: 0,
         }
     }
 
     #[inline]
-    fn increase_generation(&self) {
+    fn increase_generation(&mut self) {
         self.generation += 1;
-        if self.generation > self.iterations_per_move {
+        if self.generation > self.iterations_per_move { // generation_range = iterations_per_move
             self.generation_bound += 1;
         }
+        if self.generation >= MAX_GEN {
+            panic!("Reached maximum generation. To go further you will need to change the bit layout");
+        }
+    }
+
+    #[inline]
+    fn increase_collisions(&mut self) {
+        self.collisions += 1;
     }
 }
 
@@ -49,35 +68,91 @@ impl MCTS {
 ///     MCTS Algorithm
 /// ======================
 impl MCTS {
-    pub fn get_move(&self, root: GameState) {
-        // Explore game tree.
-        self.start_search(&root);
+    pub fn get_move(&mut self, root: &GameState, hash: u64) -> [usize; 4] {
+        // Search game tree.
+        self.start_search(root, hash);
 
         // Choose best move: the most visited child.
+        let mut moves = Vec::with_capacity(MAX_MOVES);
+        root.get_legal_moves(&moves);
+        let mut moves_not_cached = 0;
 
+        let mut max_visits = 0;
+        let mut best_move: Option<[usize; 4]> = None;
+
+        for m in &moves {
+            let child_hash = root.next_hash(m, &self.zobrist);
+            let child_bucket = self.transpositions.get_bucket(child_hash);
+            if let Some(entry) = child_bucket.get_entry(child_hash) {
+                // TO DO: when tie among most visited moves, choose randomly.
+                if entry.get_n_visits() > max_visits {
+                    max_visits = entry.get_n_visits();
+                    best_move = Some(m.clone());
+                }
+            } else {
+                moves_not_cached += 1;
+            }
+        }
+        println!("Number of child moves not cached: {}", moves_not_cached);
+        
+        if let Some(mv) = best_move {
+            return mv;
+        }
+        if else {
+            println!("No move found in the cache. Returning random move.");
+            let mut rng = thread_rng();
+            let random_move = moves.choose(&mut rng).unwrap(); // returns a reference
+            return *random_move;
+        }
     }
 
-    fn start_search(&self, root: GameState) {
-        // === Store the root in the transposition table. ===
-        let bucket = self.transpositions.get_bucket(root.hash);
-        bucket.add_entry(root.hash, self.generation, self.generation_bound);
+    fn start_search(&mut self, root: &GameState, hash: u64) {
+        self.increase_generation();
+
+        // Retrieve stats for root.
         // Root cannot have 0 visits because the first UCB value would be NaN.
+        let mut root_visits = 1usize;
+        let mut root_wins = 0isize;
+        {
+            let bucket = self.transpositions.get_bucket(root.hash);
+            if let Some(root_entry) = bucket.get_entry(root.hash) {
+                root_visits = root_entry.get_n_visits();
+                root_wins = root_entry.get_n_wins();
+            }
+        }
+        if root_visits < 1 { root_visits = 1; }
+
+        // Search game tree.
+        for iteration in 1..self.iterations_per_move {
+            // Selection and Backpropagation to the root.
+            root_wins += self.selection(root, hash, root_visits);
+            root_visits += 1;
+        }
+
+        // Store the root in the transposition table.
+        let bucket = self.transpositions.get_bucket(root.hash);
+        if bucket.add_entry(root.hash, self.generation, self.generation_bound) {
+            self.increase_collisions();
+        }
         if let Some(root_entry) = bucket.get_entry(root.hash) {
-            if root_entry.get_n_visits() == 0 { root_entry.set_n_visits(1); }
+            root_entry.set_n_visits(root_visits);
+            root_entry.set_n_wins(root_wins);
         } else {
             println!("Error: root not added to transpositions table.");
         }
 
-        // === Explore the game tree. ===
-        // Selection.
+        // The following might be useful to evaluate how the algorithm is performing in the current game.
+        println!("Exploration finished with {} wins for the current player.");
     }
 
-    /// SELECTION.
+    /// ========================
+    ///        SELECTION        
+    /// ========================
     /// Returns the result with the perspective of state.player
     ///  1 if state.player won.
     /// -1 if state.player lost.
     ///  0 if it was a draw.
-    fn selection(&mut self, state: &GameState, current_hash: u64, node_visits: u32) -> isize {
+    fn selection(&mut self, state: &GameState, current_hash: u64, node_visits: usize) -> isize {
         // === TERMINAL CHECKS ===
         // If game is over.
         if let Some(winner) = state.check_game_over() {
@@ -108,14 +183,13 @@ impl MCTS {
             let mut unvisited_moves = Vec::new();
 
             for m in &moves {
-                let child_hash = self.zobrist.update_for_move(current_hash, m, state);
-
-                // Try to retrieve the child from the Transposition Table.
+                let child_hash = state.next_hash(m, &self.zobrist);
                 let child_bucket = self.transpositions.get_bucket(child_hash);
                 let mut is_visited = false;
-                let mut child_visits = 0usize;
+                let mut child_visits = 0;
                 let mut child_wins = 0isize;
-                if let Some(entry) = self.transpositions.get_entry(child_hash) {
+                // Try to retrieve the child from the Transposition Table.
+                if let Some(entry) = child_bucket.get_entry(child_hash) {
                     if entry.get_n_visits() > 0 {
                         is_visited = true;
                         child_visits = entry.get_n_visits();
@@ -126,8 +200,9 @@ impl MCTS {
                 if is_visited {
                     // === UCB FORMULA ===
                     // Q_normalized = ((wins / visits) + 1) / 2
-                    let q_val = (child_wins as f64) / (child_visits as f64);
-                    let qnorm = (q_val + 1.0) / 2.0;
+                    // Negate the value because child's win = parent's loss.
+                    let q_val = -(child_wins as f64) / (child_visits as f64);
+                    let q_norm = (q_val + 1.0) / 2.0;
 
                     // UCB = Q + C * sqrt(ln(node_visits) / child_visits)
                     let exploration = self.ucb_const * ((node_visits as f64).ln() / (child_visits as f64)).sqrt();
@@ -168,30 +243,32 @@ impl MCTS {
         // === EXECUTE MOVE ===
         let next_state = state.clone();
         next_state.move_piece(&selected_move, &self.zobrist);
-        let result_for_current_node: isize;
+        let result_for_child_node: isize;
 
         if is_expansion_phase {
             // === EXPANSION ===
             {
                 let bucket = self.transpositions.get_bucket(selected_hash);
-                bucket.add_entry(selected_hash, self.generation, self.generation_bound);
+                if bucket.add_entry(selected_hash, self.generation, self.generation_bound) {
+                    self.increase_collisions();
+                }
             }
 
             // === SIMULATION ===
-            // result_for_current_node = simulation()
+            result_for_child_node = self.simulation(&next_state);
         } else {
             // === RECURSIVE SELECTION ===
-            let child_result = self.selection(&next_state, selected_hash, best_move_visits);
-            result_for_current_node = -child_result;
+            result_for_child_node = self.selection(&next_state, selected_hash, best_move_visits);
         }
 
         // === BACKPROPAGATION ===
+        // Store in the child entry the result for the child.
         {
             let bucket = self.transpositions.get_bucket(selected_hash);
-            if let Some(entry) = bucket.get_entry(root.hash) {
+            if let Some(entry) = bucket.get_entry(selected_hash) {
                 entry.set_generation(self.generation);
                 entry.add_n_visits(1);
-                entry.add_n_wins(result_for_current_node);
+                entry.add_n_wins(result_for_child_node);
             } else {
                 println!("Error: Entry wasn't found during backpropagation.");
                 println!("This means there is a problem with the overwriting policy.");
@@ -199,10 +276,12 @@ impl MCTS {
         }
 
         // Return result with the perspective of the current node.
-        return result_for_current_node;
+        return -result_for_child_node;
     }
 
-    /// SIMULATION.
+    /// =========================
+    ///        SIMULATION        
+    /// =========================
     /// Returns the result with the perspective of state.player
     fn simulation(&self, state: &GameState) -> isize {
         let mut temp_state = state.clone();

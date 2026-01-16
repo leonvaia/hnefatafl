@@ -66,6 +66,105 @@ impl GameState {
         println!("  0 1 2 3 4 5 6");
     }
 
+/// Compute the hash of a move without applying it.
+    #[inline]
+    pub fn next_hash(&self, coords: &[usize; 4], zobrist: &Zobrist) -> u64 {
+        let (sr, sc, er, ec) = (coords[0], coords[1], coords[2], coords[3]);
+        let piece = self.board[sr][sc];
+        
+        // Safety check (though engine shouldn't pass empty squares)
+        let p_idx = match Zobrist::piece_index(piece) {
+            Some(idx) => idx,
+            None => return self.hash, 
+        };
+
+        let mut h = self.hash;
+
+        // 1. Update hash for the move itself (Remove from start, add to end)
+        h ^= zobrist.table[sr][sc][p_idx];
+        h ^= zobrist.table[er][ec][p_idx];
+        
+        // 2. Update player turn
+        h ^= zobrist.black_to_move;
+
+        // 3. Calculate captures (Simulated)
+        let enemy = match piece {
+            'B' => 'W',
+            'W' | 'K' => 'B',
+            _ => return h, // Return current hash if invalid piece
+        };
+
+        let enemy_idx = Zobrist::piece_index(enemy).unwrap();
+
+        // Four orthogonal directions
+        let directions: [(isize, isize); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
+
+        for (dr, dc) in directions {
+            // -- Identify Victim (Adjacent to Destination) --
+            // Note: We use er/ec (destination), not row/col
+            let r_victim_i = er as isize + dr;
+            let c_victim_i = ec as isize + dc;
+
+            if r_victim_i < 0 || r_victim_i > 6 || c_victim_i < 0 || c_victim_i > 6 { continue; }
+
+            let r_victim = r_victim_i as usize;
+            let c_victim = c_victim_i as usize;
+
+            if self.board[r_victim][c_victim] != enemy { continue; }
+
+            // -- Identify Anvil (Beyond Victim) --
+            let r_anvil_i = r_victim_i + dr;
+            let c_anvil_i = c_victim_i + dc;
+
+            if r_anvil_i < 0 || r_anvil_i > 6 || c_anvil_i < 0 || c_anvil_i > 6 { continue; }
+            
+            let r_anvil = r_anvil_i as usize;
+            let c_anvil = c_anvil_i as usize;
+
+            // -- Check Sandwich Condition --
+            
+            // CASE A: The "Ghost" Square.
+            // If the anvil is the square we just moved FROM (sr, sc), 
+            // it is effectively empty right now, even if self.board says otherwise.
+            if r_anvil == sr && c_anvil == sc {
+                // Check if this empty square acts as an anvil (Corner or Throne)
+                if !self.is_static_hostile(r_anvil, c_anvil, enemy) {
+                    continue; 
+                }
+            } 
+            // CASE B: Standard Square.
+            // The anvil is elsewhere. The board state is accurate for this square.
+            else {
+                if !self.is_hostile(r_anvil, c_anvil, enemy) { continue; }
+            }
+
+            // If we reached here, it is a capture!
+            // Remove the victim from the hash.
+            h ^= zobrist.table[r_victim][c_victim][enemy_idx];
+        }
+
+        h
+    }
+
+    /// Helper to determine if a specific square coordinate is hostile by virtue of the map
+    /// (Throne/Corners) assuming the square is currently empty or treated as such.
+    #[inline]
+    fn is_static_hostile(&self, row: usize, col: usize, victim: char) -> bool {
+        // Corners are hostile to everyone
+        if (row == 0 || row == 6) && (col == 0 || col == 6) { return true; }
+
+        // Throne rules
+        if row == 3 && col == 3 {
+            match victim {
+                'B' => true,          // Throne always hostile to black
+                'W' => true,          // Throne hostile to white if empty
+                _ => false
+            }
+        } else {
+            false
+        }
+    }
+
     /// Move piece on the board and update hash and history.
     /// The logic assumes the move to be legal.
     /// coords = [start_row, start_col, end_row, end_col]
@@ -136,7 +235,7 @@ impl GameState {
         let enemy_idx = Zobrist::piece_index(enemy).unwrap();
 
         // Four orthogonal directions
-        let directions = [(-1, 0), (1, 0), (0, -1), (0, 1)];
+        let directions: [(isize, isize); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
 
         for (dr, dc) in directions {
             // Check if adjacent square contains enemy.
@@ -150,7 +249,7 @@ impl GameState {
 
             if self.board[er][ec] != enemy { continue; }
 
-            // Check square beyond the enemy for a sandwich.
+            // Check square for the anvil (the piece beyond the victim).
             let br = er as isize + dr;
             let bc = ec as isize + dc;
 

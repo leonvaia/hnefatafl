@@ -13,14 +13,16 @@ const TT_DIM_MINUS_1: usize = TT_DIM - 1;
 /// ===================
 /// Bit layout:
 /// hash:       u40 = 64 bit - TT_DIM bit
-/// generation: u29 / u31
-/// n_visits:   u29 / u28
-/// n_wins:     i30 / i29
+/// generation: u29 / u31 / u15
+/// n_visits:   u29 / u28 / u36
+/// n_wins:     i30 / i29 / u37
 /// total:      128 bit = 16 byte
+/// Note: The third layout (currently used) makes sense when generation is updated
+/// at each call of get_move() instead of at each call of start_search().
 const HASH_BITS: u32 = 40;
-const GEN_BITS: u32 = 29;
-const VISITS_BITS: u32 = 29;
-const WINS_BITS: u32 = 30;
+const GEN_BITS: u32 = 15;
+const VISITS_BITS: u32 = 36;
+const WINS_BITS: u32 = 37;
 /// Offsets.
 const HASH_OFFSET: u32 = 0;
 const GEN_OFFSET: u32 = HASH_OFFSET + HASH_BITS;
@@ -53,6 +55,12 @@ impl TT_entry {
     /// ================================
     ///            Getters
     /// ================================
+    /// Check whether the entry is empty.
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.data == 0
+    }
+
     /// Check whether a hash corresponds to an entry.
     /// We verify the upper 40 bits of the hash (since the lower 24 form the index).
     #[inline]
@@ -83,8 +91,8 @@ impl TT_entry {
         let raw = ((self.data & WINS_MASK) >> WINS_OFFSET) as u64;
         
         // Sign extension magic:
-        // We treat the 28-bit number as an i64.
-        // Shift left to push the sign bit to the MSB, then arithmetic shift right.
+        // We shift the 37-bit number to the top of the 64-bit container, 
+        // then shift back down to drag the sign bit across.        const SHIFT_AMOUNT: u32 = 64 - WINS_BITS;
         const SHIFT_AMOUNT: u32 = 64 - WINS_BITS;
         let extended = (raw as i64) << SHIFT_AMOUNT >> SHIFT_AMOUNT;
         
@@ -162,13 +170,23 @@ impl Default for TT_bucket {
 
 impl TT_bucket {
     /// Get entry corresponding to a hash.
+    #[inline]
     pub fn get_entry(&mut self, hash: u64) -> Option<&mut TT_entry> {
         for entry in &mut self.entries {
-            if entry.hash_equals(hash) {
+            if !entry.is_empty() && entry.hash_equals(hash) {
                 return Some(entry); // Found entry.
             }
         }
         None // Not found entry.
+    }
+
+    /// Overwrite entry corresponding to the index.
+    #[inline]
+    fn overwrite(&mut self, index: usize, hash: u64, generation: u32, visits: usize, wins: isize) {
+        self.entries[index].set_hash(hash);
+        self.entries[index].set_generation(generation);
+        self.entries[index].set_n_visits(visits);
+        self.entries[index].set_n_wins(wins);
     }
 
     /// =====================
@@ -178,21 +196,25 @@ impl TT_bucket {
     /// If found, do nothing.
     /// If not found, add it with zero values; overwrite according to collision handling policy:
     /// overwrite the least visited entry among the entries outside the generation range.
-    pub fn add_entry(&mut self, hash: u64, generation: u32, generation_bound: u32) {
+    /// Return true if a bad collision happen (i.e. all entries are inside generation range).
+    /// Return false otherwise.
+    pub fn add_entry(&mut self, hash: u64, generation: u32, generation_bound: u32) -> bool {
         let mut min_visits = usize::MAX;
         let mut min_index = usize::MAX;
 
+        // Find least visited entry within generation_range.
         for (index, entry) in (&mut self.entries).into_iter().enumerate() {
-            if entry.hash_equals(hash) {
-                return; // Already exists, do nothing.
+            // if entry already exists.
+            if !entry.is_empty() && entry.hash_equals(hash) {
+                return false;
             }
             // If empty entry.
-            if entry.hash_equals(0) {
+            if entry.is_empty() {
                 entry.set_hash(hash);
                 entry.set_generation(generation);
                 entry.set_n_visits(0);
                 entry.set_n_wins(0);
-                return;
+                return false;
             }
             // If found entry outside the generation range.
             if entry.get_generation() < generation_bound
@@ -202,23 +224,23 @@ impl TT_bucket {
             }
         }
 
-        // If bucket is full.
+        // If not found i.e. bucket is full.
         if min_visits == usize::MAX {
-            println!("Error: Bucket full at hash {}", hash);
-            println!("Overwrite least visited entry inside generation range.");
+            // Find least visited entry.
             for (index, entry) in (&mut self.entries).into_iter().enumerate() {
                 if entry.get_n_visits() < min_visits {
                     min_visits = entry.get_n_visits();
                     min_index = index;
                 }
             }
+            // Overwrite it.
+            self.overwrite(min_index, hash, generation, 0, 0);
+            return true;
         }
 
         // Overwrite.
-        self.entries[min_index].set_hash(hash);
-        self.entries[min_index].set_generation(generation);
-        self.entries[min_index].set_n_visits(0);
-        self.entries[min_index].set_n_wins(0);
+        self.overwrite(min_index, hash, generation, 0, 0);
+        return false;
     }
 }
 
