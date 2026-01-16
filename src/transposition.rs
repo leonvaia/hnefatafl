@@ -1,17 +1,16 @@
-/// Transposition table data structure.
+//! Transposition table data structure.
 
 use std::mem;
 
+/// Note: If we change TT_DIM const to not be a power of 2,
+/// then we need to change the unsafe code in get_bucket().
 const TT_DIM_BITS: u64 = 24; // When decreasing this under 24, modify also bit layout.
 const TT_DIM: usize = 1 << TT_DIM_BITS;
 const TT_DIM_MINUS_1: usize = TT_DIM - 1;
-/// Note: If we change TT_DIM const to not be a power of 2,
-/// then we need to change the unsafe code in get_bucket().
 
-/// ===============
-///      Entry     
-/// ===============
-
+/// ===================
+///        Entry     
+/// ===================
 /// Bit layout:
 /// hash:       u40 = 64 bit - TT_DIM bit
 /// generation: u29 / u31
@@ -22,7 +21,6 @@ const HASH_BITS: u32 = 40;
 const GEN_BITS: u32 = 29;
 const VISITS_BITS: u32 = 29;
 const WINS_BITS: u32 = 30;
-
 /// Offsets.
 const HASH_OFFSET: u32 = 0;
 const GEN_OFFSET: u32 = HASH_OFFSET + HASH_BITS;
@@ -55,7 +53,6 @@ impl TT_entry {
     /// ================================
     ///            Getters
     /// ================================
-
     /// Check whether a hash corresponds to an entry.
     /// We verify the upper 40 bits of the hash (since the lower 24 form the index).
     #[inline]
@@ -97,7 +94,6 @@ impl TT_entry {
     /// =================================
     ///            Setters
     /// =================================
-
     #[inline]
     pub fn set_hash(&mut self, hash: u64) {
         // Clear the old hash bits
@@ -151,7 +147,6 @@ impl TT_entry {
 /// ==================
 ///       Bucket 
 /// ==================
-
 /// align(64) aligns to cache lines (optimized and avoids False Sharing).
 #[repr(C, align(64))]
 #[derive(Clone, Copy)]
@@ -200,11 +195,10 @@ impl TT_bucket {
                 return;
             }
             // If found entry outside the generation range.
-            if entry.get_generation() < generation_bound {
-                if entry.get_n_visits() < min_visits {
-                    min_visits = entry.get_n_visits();
-                    min_index = index;
-                }
+            if entry.get_generation() < generation_bound
+            && entry.get_n_visits() < min_visits {
+                min_visits = entry.get_n_visits();
+                min_index = index;
             }
         }
 
@@ -233,6 +227,12 @@ impl TT_bucket {
 /// ===========================
 pub struct TT {
     pub buckets: Box<[TT_bucket]>,
+}
+
+impl Default for TT {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TT {
