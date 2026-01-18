@@ -153,6 +153,7 @@ impl MCTS {
 
         // The following might be useful to evaluate how the algorithm is performing in the current game.
         println!("Exploration finished with {} wins for the current player.", root_wins);
+        println!("Number of total collisions {}", self.collisions);
     }
 
     /// ========================
