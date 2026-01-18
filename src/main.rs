@@ -7,34 +7,72 @@ pub mod mcts;
 use hnefatafl::GameState;
 use mcts::MCTS;
 
+enum GameMode {
+    HumanVsHuman,
+    HumanVsBot,
+}
+
+const BOT_SIDE: char = 'W'; // or 'W'
+
+fn play_game(mut game: GameState, mut engine: MCTS, mode: GameMode) {
+    loop {
+        game.display();
+
+        if let Some(result) = game.check_game_over(&engine.z_table) {
+            announce_result(result);
+            break;
+        }
+
+        match mode {
+            GameMode::HumanVsHuman => {
+                game.human_move(&engine.z_table);
+            }
+
+            GameMode::HumanVsBot => {
+                if game.player == BOT_SIDE {
+                    println!("Bot is thinking...");
+
+                    engine.computer_move(&mut game);
+                } else {
+                    game.human_move(&engine.z_table);
+                }
+            }
+        }
+    }
+}
+
+fn announce_result(result: char) {
+    match result {
+        'W' => println!("White wins!"),
+        'B' => println!("Black wins!"),
+        'D' => println!("Draw."),
+        'E' => println!("Game ended with an error."),
+        _ => {}
+    }
+}
+
 fn main() {
-    let mut engine = MCTS::new(0xCAFEBABE);
-
-    // Play a game.
-
-    let mut state = GameState::new(&engine.z_table);
-
-    let human_player: char = 'B';
 
     println!("Welcome to Hnefatafl!\n");
     println!("Enter positions in the following format:");
     println!("start_row start_col end_row end_col");
 
-    let winner = loop {
-        println!();
-        state.display();
-        
-        if let Some(player_char) = state.check_game_over(&engine.z_table) {
-            break player_char; // Exit the loop and return the winner.
-        }
+    let mut engine = MCTS::new(0xCAFEBABE);
 
-        if state.player == human_player {
-            // Get human move and apply it to the state.
-            state.human_move(&engine.z_table);
-        } else {
-            engine.computer_move(&mut state);
-        }
+    // Play a game.
+
+    let mut game = GameState::new(&engine.z_table);
+
+    let human_player: char = 'B';
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).unwrap();
+
+    let mode = match input.trim() {
+        "2" => GameMode::HumanVsHuman,
+        _ => GameMode::HumanVsBot,
     };
 
-    println!("\nGame Over! The winner is: {}", winner);
+    play_game(game, engine, mode);
 }
+
