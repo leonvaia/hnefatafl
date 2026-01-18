@@ -81,7 +81,7 @@ impl MCTS {
 
         // Choose best move: the most visited child.
         let mut moves = Vec::with_capacity(MAX_MOVES);
-        root.get_legal_moves(&mut moves);
+        root.get_legal_moves(&mut moves, &self.z_table);
         let mut moves_not_cached = 0;
 
         let mut max_visits = 0;
@@ -165,7 +165,7 @@ impl MCTS {
     fn selection(&mut self, state: &GameState, node_visits: usize) -> isize {
         // === TERMINAL CHECKS ===
         // If game is over.
-        if let Some(winner) = state.check_game_over() {
+        if let Some(winner) = state.check_game_over(&self.z_table) {
             // If we are at a terminal node during selection,
             // it means the *previous* player made a winning move
             if winner == 'T' { return 0; } // Draw
@@ -184,7 +184,7 @@ impl MCTS {
         {
             // === COMPUTE UCB ===
             let mut moves = Vec::with_capacity(MAX_MOVES);
-            state.get_legal_moves(&mut moves);
+            state.get_legal_moves(&mut moves, &self.z_table);
 
             let mut max_ucb_value = -1.0;
             let mut best_move: Option<[usize; 4]> = None;
@@ -301,14 +301,14 @@ impl MCTS {
         // Play random moves until the game is over.
         loop {
             // Check game over.
-            if let Some(winner) = temp_state.check_game_over() {
+            if let Some(winner) = temp_state.check_game_over(&self.z_table) {
                 if winner == 'T' { return 0; }
                 else if winner == state.player { return 1; }
                 else { return -1; }
             }
 
             // Available moves.
-            temp_state.get_legal_moves(&mut moves);
+            temp_state.get_legal_moves(&mut moves, &self.z_table);
             if moves.is_empty() {
                 println!("Error: Simulation step has no moves but game over wasn't caught.");
                 println!("Applying rule 9 anyways...\n");

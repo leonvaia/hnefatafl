@@ -4,10 +4,11 @@
 use std::io::{self, Write};
 use crate::zobrist::Zobrist;
 
-/// The maximum number of move repetition White can perform.
-/// Note: For Rule 8 (Perpetual repetitions), instead of making black win, we forbid
+/// The maximum number of plies for a game.
+/// Used to implement Rule 8 (Perpetual repetitions).
+/// Note: For Rule 8, instead of making black win, we forbid
 /// repetitions when white moves. Rule 9 makes the rule work anyways.
-const MAX_REPEATING_MOVES: usize = 5;
+const MAX_GAME_LENGTH: usize = 512;
 
 #[derive(Clone, Copy)]
 pub struct GameState {
@@ -17,8 +18,8 @@ pub struct GameState {
     // Track king to avoid scanning board in check_game_over() to find it.
     king_pos: (usize, usize),
     // History for Rule 8.
-    last_move_white: [usize; 4],
-    last_move_white_counter: usize,
+    history: [u64; MAX_GAME_LENGTH],
+    history_len: usize,
 }
 
 impl GameState {
@@ -44,13 +45,17 @@ impl GameState {
         }
         hash ^= z_table.black_to_move;
 
+        // Initialize history array.
+        let mut history = [0u64; MAX_GAME_LENGTH];
+        history[0] = hash;
+
         Self {
             board: initial_board,
             player: 'B',
             hash,
             king_pos: (3, 3),
-            last_move_white: [0; 4],
-            last_move_white_counter: 0,
+            history,
+            history_len: 1,
         }
     }
 
@@ -188,31 +193,17 @@ impl GameState {
             self.king_pos = (er, ec);
         }
 
-        // Update last move.
-        if self.is_repetition(coords) {
-            self.last_move_white_counter += 1;
-        } else {
-            self.last_move_white = *coords;
-            self.last_move_white_counter = 1;
+        // Update history (only after updating self.hash).
+        if self.history_len < MAX_GAME_LENGTH {
+            self.history[self.history_len] = self.hash;
+            self.history_len += 1;
         }
         
-        // Update player (only after updating last move).
+        // Update player.
         self.player = if self.player == 'B' { 'W' } else { 'B' };
 
         // Apply captures.
         self.apply_captures(er, ec, z_table);
-    }
-
-    /// Checks whether White is repeating the move.
-    #[inline]
-    fn is_repetition(&self, coords: &[usize; 4]) -> bool {
-        if self.player == 'W' {
-            if (self.last_move_white == *coords) ||
-            (self.last_move_white == [coords[2], coords[3], coords[0], coords[1]]) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /// Apply captures to nonking pieces.
@@ -314,18 +305,10 @@ impl GameState {
         return false;
     }
 
-    /// Checks whether White is repeating the move exceeding the repetition limit.
+    /// Checks whether the move repeats a state that was already visited.
     #[inline]
-    fn is_illegal_repetition(&self, coords: &[usize; 4]) -> bool {
-        if self.player == 'W' {
-            if (self.last_move_white == *coords) ||
-            (self.last_move_white == [coords[2], coords[3], coords[0], coords[1]]) {
-                if self.last_move_white_counter == (MAX_REPEATING_MOVES - 1) {
-                    return true;
-                }
-            }
-        }
-        return false;
+    fn is_illegal_repetition(&self, coords: &[usize; 4], next_hash: &u64) -> bool {
+        return self.history[0..self.history_len].contains(&next_hash);
     }
 
     /// Check if game is over.
@@ -334,7 +317,7 @@ impl GameState {
     /// W - White wins
     /// B - Black wins
     /// D - Draw
-    pub fn check_game_over(&self) -> Option<char> {
+    pub fn check_game_over(&self, z_table: &Zobrist) -> Option<char> {
         // === Check if King is at a corner => White wins ===
         let corners = [(0,0), (0,6), (6,0), (6,6)];
         for (r, c) in corners {
@@ -407,7 +390,7 @@ impl GameState {
         }
 
         // === Rule 9: If the player to move has no legal move, he loses. ===
-        if !self.has_legal_move(self.player) {
+        if !self.has_legal_move(self.player, &z_table) {
             let winner = if self.player == 'B' { 'W' } else { 'B' };
             return Some(winner);
         }
@@ -443,7 +426,7 @@ impl GameState {
     /// Return true if the given player has at least one legal move.
     /// Function called only by check_game_over()
     #[inline]
-    fn has_legal_move(&self, player: char) -> bool {
+    fn has_legal_move(&self, player: char, z_table: &Zobrist) -> bool {
         for r in 0..7 {
             for c in 0..7 {
                 let piece = self.board[r][c];
@@ -457,8 +440,9 @@ impl GameState {
                 while rr >= 0 {
                     if self.board[rr as usize][c] != '.' { break; }
                     let coords = [r, c, rr as usize, c];
+                    let next_hash = self.next_hash(&coords, &z_table);
                     if !self.is_nonking_entering_restricted(&coords)
-                    && !self.is_illegal_repetition(&coords) {return true; }
+                    && !self.is_illegal_repetition(&coords, &next_hash) { return true; }
                     rr -= 1;
                 }
                 // down
@@ -466,8 +450,9 @@ impl GameState {
                 while rr < 7 {
                     if self.board[rr as usize][c] != '.' { break; }
                     let coords = [r, c, rr as usize, c];
+                    let next_hash = self.next_hash(&coords, &z_table);
                     if !self.is_nonking_entering_restricted(&coords)
-                    && !self.is_illegal_repetition(&coords) {return true; }
+                    && !self.is_illegal_repetition(&coords, &next_hash) { return true; }
                     rr += 1;
                 }
                 // left
@@ -475,8 +460,9 @@ impl GameState {
                 while cc >= 0 {
                     if self.board[r][cc as usize] != '.' { break; }
                     let coords = [r, c, r, cc as usize];
+                    let next_hash = self.next_hash(&coords, &z_table);
                     if !self.is_nonking_entering_restricted(&coords)
-                    && !self.is_illegal_repetition(&coords) {return true; }
+                    && !self.is_illegal_repetition(&coords, &next_hash) { return true; }
                     cc -= 1;
                 }
                 // right
@@ -484,8 +470,9 @@ impl GameState {
                 while cc < 7 {
                     if self.board[r][cc as usize] != '.' { break; }
                     let coords = [r, c, r, cc as usize];
+                    let next_hash = self.next_hash(&coords, &z_table);
                     if !self.is_nonking_entering_restricted(&coords)
-                    && !self.is_illegal_repetition(&coords) {return true; }
+                    && !self.is_illegal_repetition(&coords, &next_hash) { return true; }
                     cc += 1;
                 }
             }
@@ -496,7 +483,7 @@ impl GameState {
     /// Modify in place the vector of legal moves from the current state.
     /// Avoids allocating a vector each time (the function is called multiple times during Simulation).
     /// Algorithm from has_legal_move() modified to guarantee that indices are usize (and avoid casting).
-    pub fn get_legal_moves(&self, moves: &mut Vec<[usize; 4]>) {
+    pub fn get_legal_moves(&self, moves: &mut Vec<[usize; 4]>, z_table: &Zobrist) {
         moves.clear();
         for r in 0..7 {
             for c in 0..7 {
@@ -512,10 +499,9 @@ impl GameState {
                         if self.board[rr][c] != '.' { break; }
                         // All indices are of type usize.
                         let coords = [r, c, rr, c];
-                        // Restricted squares may only be occupied by the king.
-                        // All other check for move validity are already guaranteed.
+                        let next_hash = self.next_hash(&coords, &z_table);
                         if !self.is_nonking_entering_restricted(&coords)
-                        && !self.is_illegal_repetition(&coords) {
+                        && !self.is_illegal_repetition(&coords, &next_hash) {
                             moves.push(coords);
                         }
                     }
@@ -525,8 +511,9 @@ impl GameState {
                     for rr in r+1..7 {
                         if self.board[rr][c] != '.' { break; }
                         let coords = [r, c, rr, c];
+                        let next_hash = self.next_hash(&coords, &z_table);
                         if !self.is_nonking_entering_restricted(&coords)
-                        && !self.is_illegal_repetition(&coords) {
+                        && !self.is_illegal_repetition(&coords, &next_hash) {
                             moves.push(coords);
                         }
                     }
@@ -536,8 +523,9 @@ impl GameState {
                     for cc in (0..c).rev() {
                         if self.board[r][cc] != '.' { break; }
                         let coords = [r, c, r, cc];
+                        let next_hash = self.next_hash(&coords, &z_table);
                         if !self.is_nonking_entering_restricted(&coords)
-                        && !self.is_illegal_repetition(&coords) {
+                        && !self.is_illegal_repetition(&coords, &next_hash) {
                             moves.push(coords);
                         }
                     }
@@ -547,8 +535,9 @@ impl GameState {
                     for cc in c+1..7 {
                         if self.board[r][cc] != '.' { break; }
                         let coords = [r, c, r, cc];
+                        let next_hash = self.next_hash(&coords, &z_table);
                         if !self.is_nonking_entering_restricted(&coords)
-                        && !self.is_illegal_repetition(&coords) {
+                        && !self.is_illegal_repetition(&coords, &next_hash) {
                             moves.push(coords);
                         }
                     }
@@ -579,8 +568,8 @@ impl GameState {
             match res {
                 Ok(coords) => {
                     // Check if the move is valid and do it.
-                    if self.is_legal_move(&coords) {
-                        self.move_piece(&coords, z_table);
+                    if self.is_legal_move(&coords, &z_table) {
+                        self.move_piece(&coords, &z_table);
                         return;
                     } else {
                         continue;
@@ -597,7 +586,7 @@ impl GameState {
     /// Check if the given move (coords) is legal.
     /// Used only for user moves.
     #[inline]
-    fn is_legal_move(&self, coords: &[usize; 4]) -> bool {
+    fn is_legal_move(&self, coords: &[usize; 4], z_table: &Zobrist) -> bool {
         // If start == end
         if coords[0] == coords[2] && coords[1] == coords[3] {
             // println!("Invalid move: Piece must move in a new square.");
@@ -668,7 +657,8 @@ impl GameState {
         }
 
         // White player cannot repeat move.
-        if self.is_illegal_repetition(&coords) {
+        let next_hash = self.next_hash(&coords, &z_table);
+        if self.is_illegal_repetition(&coords, &next_hash) {
             return false;
         }
 

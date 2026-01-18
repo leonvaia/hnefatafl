@@ -24,7 +24,7 @@ fn main() {
         println!();
         state.display();
         
-        if let Some(player_char) = state.check_game_over() {
+        if let Some(player_char) = state.check_game_over(&engine.z_table) {
             break player_char; // Exit the loop and return the winner.
         }
 
