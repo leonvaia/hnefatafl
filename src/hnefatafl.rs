@@ -22,7 +22,7 @@ pub struct GameState {
 }
 
 impl GameState {
-    pub fn new(zobrist: &Zobrist) -> Self {
+    pub fn new(z_table: &Zobrist) -> Self {
         let initial_board = [
             ['.', '.', '.', 'B', '.', '.', '.'],
             ['.', '.', '.', 'B', '.', '.', '.'],
@@ -38,11 +38,11 @@ impl GameState {
         for (r, row) in initial_board.iter().enumerate() {
             for (c, &piece_char) in row.iter().enumerate() {
                 if let Some(p_idx) = Zobrist::piece_index(piece_char) {
-                    hash ^= zobrist.table[r][c][p_idx];
+                    hash ^= z_table.table[r][c][p_idx];
                 }
             }
         }
-        hash ^= zobrist.black_to_move;
+        hash ^= z_table.black_to_move;
 
         Self {
             board: initial_board,
@@ -66,9 +66,9 @@ impl GameState {
         println!("  0 1 2 3 4 5 6");
     }
 
-/// Compute the hash of a move without applying it.
+    /// Compute the hash of a move without applying it.
     #[inline]
-    pub fn next_hash(&self, coords: &[usize; 4], zobrist: &Zobrist) -> u64 {
+    pub fn next_hash(&self, coords: &[usize; 4], z_table: &Zobrist) -> u64 {
         let (sr, sc, er, ec) = (coords[0], coords[1], coords[2], coords[3]);
         let piece = self.board[sr][sc];
         
@@ -81,11 +81,11 @@ impl GameState {
         let mut h = self.hash;
 
         // 1. Update hash for the move itself (Remove from start, add to end)
-        h ^= zobrist.table[sr][sc][p_idx];
-        h ^= zobrist.table[er][ec][p_idx];
+        h ^= z_table.table[sr][sc][p_idx];
+        h ^= z_table.table[er][ec][p_idx];
         
         // 2. Update player turn
-        h ^= zobrist.black_to_move;
+        h ^= z_table.black_to_move;
 
         // 3. Calculate captures (Simulated)
         let enemy = match piece {
@@ -140,7 +140,7 @@ impl GameState {
 
             // If we reached here, it is a capture!
             // Remove the victim from the hash.
-            h ^= zobrist.table[r_victim][c_victim][enemy_idx];
+            h ^= z_table.table[r_victim][c_victim][enemy_idx];
         }
 
         h
@@ -169,7 +169,7 @@ impl GameState {
     /// The logic assumes the move to be legal.
     /// coords = [start_row, start_col, end_row, end_col]
     #[inline]
-    pub fn move_piece(&mut self, coords: &[usize; 4], zobrist: &Zobrist) {
+    pub fn move_piece(&mut self, coords: &[usize; 4], z_table: &Zobrist) {
         let (sr, sc, er, ec) = (coords[0], coords[1], coords[2], coords[3]);
         let piece = self.board[sr][sc];
         let p_idx = Zobrist::piece_index(piece).unwrap();
@@ -179,9 +179,9 @@ impl GameState {
         self.board[sr][sc] = '.';
 
         // Update hash.
-        self.hash ^= zobrist.table[sr][sc][p_idx];
-        self.hash ^= zobrist.table[er][ec][p_idx];
-        self.hash ^= zobrist.black_to_move;        
+        self.hash ^= z_table.table[sr][sc][p_idx];
+        self.hash ^= z_table.table[er][ec][p_idx];
+        self.hash ^= z_table.black_to_move;        
 
         // Update king position.
         if piece == 'K' {
@@ -200,14 +200,14 @@ impl GameState {
         self.player = if self.player == 'B' { 'W' } else { 'B' };
 
         // Apply captures.
-        self.apply_captures(er, ec, zobrist);
+        self.apply_captures(er, ec, z_table);
     }
 
     /// Checks whether White is repeating the move.
     #[inline]
     fn is_repetition(&self, coords: &[usize; 4]) -> bool {
         if self.player == 'W' {
-            if (self.last_move_white == coords) ||
+            if (self.last_move_white == *coords) ||
             (self.last_move_white == [coords[2], coords[3], coords[0], coords[1]]) {
                 return true;
             }
@@ -218,7 +218,7 @@ impl GameState {
     /// Apply captures to nonking pieces.
     /// King capture is checked only in check_game_over()
     #[inline]
-    fn apply_captures(&mut self, row: usize, col: usize, zobrist: &Zobrist) {
+    fn apply_captures(&mut self, row: usize, col: usize, z_table: &Zobrist) {
         let mover = self.board[row][col];
 
         if mover == '.' {
@@ -264,7 +264,7 @@ impl GameState {
             self.board[er][ec] = '.';
 
             // Update hash.
-            self.hash ^= zobrist.table[er][ec][enemy_idx];
+            self.hash ^= z_table.table[er][ec][enemy_idx];
         }
     }
 
@@ -294,6 +294,7 @@ impl GameState {
             match victim {
                 'B' => true,               // throne always hostile to black
                 'W' => square == '.',      // hostile to white only if empty
+                _ => false,
             }
         } else {
             false
@@ -317,7 +318,7 @@ impl GameState {
     #[inline]
     fn is_illegal_repetition(&self, coords: &[usize; 4]) -> bool {
         if self.player == 'W' {
-            if (self.last_move_white == coords) ||
+            if (self.last_move_white == *coords) ||
             (self.last_move_white == [coords[2], coords[3], coords[0], coords[1]]) {
                 if self.last_move_white_counter == (MAX_REPEATING_MOVES - 1) {
                     return true;
@@ -521,7 +522,7 @@ impl GameState {
                 }
                 // down
                 if r < 6 {
-                    for rr in (r+1..7) {
+                    for rr in r+1..7 {
                         if self.board[rr][c] != '.' { break; }
                         let coords = [r, c, rr, c];
                         if !self.is_nonking_entering_restricted(&coords)
@@ -543,7 +544,7 @@ impl GameState {
                 }
                 // right
                 if c < 6 {
-                    for cc in (c+1..7) {
+                    for cc in c+1..7 {
                         if self.board[r][cc] != '.' { break; }
                         let coords = [r, c, r, cc];
                         if !self.is_nonking_entering_restricted(&coords)
@@ -558,7 +559,7 @@ impl GameState {
 
     /// Gets a move from CLI.
     /// If valid then moves the piece.
-    pub fn human_move(&mut self, zobrist: &Zobrist) {
+    pub fn human_move(&mut self, z_table: &Zobrist) {
         loop {
             println!("\nCurrent Player: {}", self.player);
             print!("Enter move: ");
@@ -579,7 +580,7 @@ impl GameState {
                 Ok(coords) => {
                     // Check if the move is valid and do it.
                     if self.is_legal_move(&coords) {
-                        self.move_piece(&coords, zobrist);
+                        self.move_piece(&coords, z_table);
                         return;
                     } else {
                         continue;

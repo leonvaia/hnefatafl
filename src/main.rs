@@ -1,23 +1,20 @@
 
 pub mod hnefatafl;
 pub mod zobrist;
+pub mod transposition;
 pub mod mcts;
 
 use hnefatafl::GameState;
-use zobrist::Zobrist;
-use transposition::TT_entry;
-use transposition::TT_bucket;
-use transposition::TT;
+use mcts::MCTS;
 
 fn main() {
     let mut engine = MCTS::new(0xCAFEBABE);
 
     // Play a game.
 
-    let mut state = GameState::new(&engine.zobrist);
+    let mut state = GameState::new(&engine.z_table);
 
     let human_player: char = 'B';
-    let computer_player: char = 'W';
 
     println!("Welcome to Hnefatafl!\n");
     println!("Enter positions in the following format:");
@@ -33,15 +30,10 @@ fn main() {
 
         if state.player == human_player {
             // Get human move and apply it to the state.
-            state.human_move(&zobrist);
-            // Update the hash.
-            // forse ha senso mettere anche questa parte dentro human_move in
-            // modo che la funzioni ritorni l'hash
+            state.human_move(&engine.z_table);
         } else {
-            
+            engine.computer_move(&mut state);
         }
-
-        // get_MCTS_move();
     };
 
     println!("\nGame Over! The winner is: {}", winner);
