@@ -37,7 +37,7 @@ pub struct MCTS {
 impl MCTS {
     pub fn new(seed: u64) -> Self {
         Self {
-            iterations_per_move: 1_000_000,
+            iterations_per_move: 200_000,
             ucb_const: 1.414,
             generation: 0,
             generation_bound: 0,
@@ -166,11 +166,12 @@ impl MCTS {
     fn selection(&mut self, state: &GameState, node_visits: usize) -> isize {
         // === TERMINAL CHECKS ===
         // If game is over.
-        if let Some(winner) = state.check_game_over(&self.z_table) {
+        match state.check_game_over(&self.z_table) {
             // If we are at a terminal node during selection,
             // it means the *previous* player made a winning move
-            if winner == 'T' { return 0; } // Draw
-            else { return -1; } // Loss
+            Some('T') => return 0, // Draw
+            Some(_) => return -1, // Loss
+            None => {},
         }
 
         // If heuristic_wins_B

@@ -206,7 +206,7 @@ impl GameState {
         self.apply_captures(er, ec, z_table);
     }
 
-    /// Apply captures to nonking pieces.
+    /// Apply all captures.
     /// King capture is checked only in check_game_over()
     #[inline]
     fn apply_captures(&mut self, row: usize, col: usize, z_table: &Zobrist) {
@@ -217,13 +217,11 @@ impl GameState {
             return;
         }
 
-        let enemy = match mover {
-            'B' => 'W',
-            'W' | 'K' => 'B',
+        let targets = match mover {
+            'B' => vec!['W', 'K'],
+            'W' | 'K' => vec!['B'],
             _ => return,
         };
-
-        let enemy_idx = Zobrist::piece_index(enemy).unwrap();
 
         // Four orthogonal directions
         let directions: [(isize, isize); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
@@ -238,8 +236,25 @@ impl GameState {
             let er = er as usize;
             let ec = ec as usize;
 
-            if self.board[er][ec] != enemy { continue; }
+            let neighbor = self.board[er][ec];
 
+            // Check if neighbor is a target.
+            if !targets.contains(&neighbor) { continue; }
+
+            // === Handle King capture separately ===
+            if neighbor == 'K' {
+                if self.check_king_capture(er, ec) {
+                    // Remove King.
+                    self.board[er][ec] = '.';
+                    // Update Hash.
+                    let k_idx = Zobrist::piece_index('K').unwrap();
+                    self.hash ^= z_table.table[er][ec][k_idx];
+                    // Note: we don't return here, a move might capture multiple pieces.
+                }
+                continue;
+            }
+
+            // === Standard capture ===
             // Check square for the anvil (the piece beyond the victim).
             let br = er as isize + dr;
             let bc = ec as isize + dc;
@@ -249,12 +264,13 @@ impl GameState {
             let br = br as usize;
             let bc = bc as usize;
 
-            if !self.is_hostile(br, bc, enemy) { continue; }
+            if !self.is_hostile(br, bc, neighbor) { continue; }
 
             // Update board.
             self.board[er][ec] = '.';
 
             // Update hash.
+            let enemy_idx = Zobrist::piece_index(neighbor).unwrap();
             self.hash ^= z_table.table[er][ec][enemy_idx];
         }
     }
@@ -292,6 +308,66 @@ impl GameState {
         }
     }
     
+    /// Returns true if the King at (r, c) is captured.
+    #[inline]
+    fn check_king_capture(&self, r: usize, c: usize) -> bool {
+        // If the king is on the throne,
+        // he has to be surrounded on all four sides.
+        if r == 3 && c == 3 {
+            let neighbors = [(2,3), (3,2), (3,4), (4,3)];
+            for (nr, nc) in neighbors {
+                if self.board[nr][nc] != 'B' { return false; }
+            }
+            return true;
+        }
+
+        // If the king is next to the throne,
+        // he has to be surrounded on the remaining three sides.
+        if (r == 2 && c == 3) || (r == 3 && c == 2) || (r == 3 && c == 4) || (r == 4 && c == 3) {
+            let neighbors = [
+                (r as isize - 1, c as isize),
+                (r as isize + 1, c as isize),
+                (r as isize, c as isize - 1),
+                (r as isize, c as isize + 1),
+            ];
+            for (nr, nc) in neighbors {
+                let piece = self.board[nr as usize][nc as usize];
+                // Hostile if it's Black or the Throne (3,3)
+                let is_hostile = piece == 'B' || (nr == 3 && nc == 3);
+                if !is_hostile { return false; }
+            }
+            return true;
+        }
+
+        // If the king is not at or next to the throne,
+        // he can be captured like any other piece, with two enemies at the sides.
+        // Note: The corner fields are hostile to all, including the King.
+        let neighbors = [
+            [
+                (r as isize - 1, c as isize), // North
+                (r as isize + 1, c as isize), // South
+            ],
+            [
+                (r as isize, c as isize - 1), // West
+                (r as isize, c as isize + 1), // East
+            ]
+        ];
+        for pair in neighbors {
+            let mut hostile_count = 0;
+            for (er, ec) in pair {
+                if er < 0 || er > 6 || ec < 0 || ec > 6 { continue; }
+                let piece = self.board[er as usize][ec as usize];
+                // A side is "hostile" if it is an Attacker OR a corner.
+                if piece == 'B' || ((er == 0 || er == 6) && (ec == 0 || ec == 6)) {
+                    hostile_count += 1;
+                }
+            }
+            if hostile_count == 2 { return true; }
+        }
+
+        return false;
+    }
+
     /// Checks whether a piece different than the king is entering a restricted square.
     #[inline]
     fn is_nonking_entering_restricted(&self, coords: &[usize; 4]) -> bool {
@@ -311,7 +387,7 @@ impl GameState {
         return self.history[0..self.history_len].contains(&next_hash);
     }
 
-    /// Check if game is over.
+    /// Check if game is over, given a state and a move.
     /// Returns:
     /// None - Game is not over
     /// W - White wins
@@ -327,66 +403,11 @@ impl GameState {
         }
 
         // === Check if King is captured => Black wins ===
-        let k_row: usize = self.king_pos.0;
-        let k_col: usize = self.king_pos.1;
-
-        // If the king is on the throne,
-        // he has to be surrounded on all four sides.
-        if k_row == 3 && k_col == 3 {
-            if self.board[2][3] == 'B' && self.board[3][2] == 'B' &&
-                self.board[3][4] == 'B' && self.board[4][3] == 'B' {
-                return Some('B');
-            }
-        }
-
-        // If the king is next to the throne,
-        // he has to be surrounded on the remaining three sides.
-        else if (k_row == 2 && k_col == 3) || (k_row == 3 && k_col == 2) ||
-            (k_row == 3 && k_col == 4) || (k_row == 4 && k_col == 3) {
-            let neighbors = [
-                (k_row as isize - 1, k_col as isize), // North
-                (k_row as isize + 1, k_col as isize), // South
-                (k_row as isize, k_col as isize - 1), // West
-                (k_row as isize, k_col as isize + 1), // East
-            ];
-            let mut hostile_count = 0;
-            for (r, c) in neighbors {
-                if r < 0 || r > 6 || c < 0 || c > 6 { continue; }
-                let piece = self.board[r as usize][c as usize];
-                // A side is hostile if it is an Attacker OR the Throne.
-                if piece == 'B' || (r == 3 && c == 3) {
-                    hostile_count += 1;
-                }
-            }
-            if hostile_count == 4 { return Some('B'); }
-        }
-
-        // If the king is not at or next to the throne,
-        // he can be captured like any other piece, with two enemies at the sides.
-        // Note: The corner fields are hostile to all, including the King.
-        else {
-            let neighbors = [
-                [
-                    (k_row as isize - 1, k_col as isize), // North
-                    (k_row as isize + 1, k_col as isize), // South
-                ],
-                [
-                    (k_row as isize, k_col as isize - 1), // West
-                    (k_row as isize, k_col as isize + 1), // East
-                ]
-            ];
-            for pair in neighbors {
-                let mut hostile_count = 0;
-                for (r, c) in pair {
-                    if r < 0 || r > 6 || c < 0 || c > 6 { continue; }
-                    let piece = self.board[r as usize][c as usize];
-                    // A side is "hostile" if it is an Attacker OR a corner.
-                    if piece == 'B' || ((r == 0 || r == 6) && (c == 0 || c == 6)) {
-                        hostile_count += 1;
-                    }
-                }
-                if hostile_count == 2 { return Some('B'); }
-            }
+        // We rely on the fact that if the King was captured,
+        // he was removed from the board in apply_captures.
+        let (kr, kc) = self.king_pos;
+        if self.board[kr][kc] != 'K' {
+            return Some('B');
         }
 
         // === Rule 9: If the player to move has no legal move, he loses. ===
