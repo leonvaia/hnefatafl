@@ -14,11 +14,12 @@ enum GameMode {
 
 const BOT_SIDE: char = 'W'; // or 'W'
 
-fn play_game(mut game: GameState, mut engine: MCTS, mode: GameMode) {
+fn play_game(engine: &mut MCTS, mode: GameMode) {
+    let mut game = GameState::new(&engine.z_table);
     loop {
         game.display();
 
-        if let Some(result) = game.check_game_over(&engine.z_table) {
+        if let Some(result) = game.check_game_over_log() {
             announce_result(result);
             break;
         }
@@ -59,12 +60,6 @@ fn main() {
 
     let mut engine = MCTS::new(0xCAFEBABE);
 
-    // Play a game.
-
-    let mut game = GameState::new(&engine.z_table);
-
-    let human_player: char = 'B';
-
     let mut input = String::new();
     std::io::stdin().read_line(&mut input).unwrap();
 
@@ -73,6 +68,6 @@ fn main() {
         _ => GameMode::HumanVsBot,
     };
 
-    play_game(game, engine, mode);
+    play_game(&mut engine, mode);
 }
 

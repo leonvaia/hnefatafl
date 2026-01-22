@@ -33,14 +33,4 @@ impl Zobrist {
             black_to_move: rng.random::<u64>(),
         }
     }
-
-    #[inline]
-    pub(crate) fn piece_index(piece: char) -> Option<usize> {
-        match piece {
-            'B' => Some(0),
-            'W' => Some(1),
-            'K' => Some(2),
-            _ => None,
-        }
-    }
 }

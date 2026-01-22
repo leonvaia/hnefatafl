@@ -11,6 +11,11 @@ use crate::zobrist::Zobrist;
 use crate::transposition::TT;
 use crate::hnefatafl::GameState;
 
+/// Negamax values.
+const WIN: isize = 1;
+const LOSS: isize = 0;
+const DRAW: isize = -1;
+
 /// Maximum number of generations (to prevent data corruption) according to current bit layout.
 const MAX_GEN: u32 = 1 << 15; // = 2^GEN_BITS
 
@@ -37,6 +42,7 @@ pub struct MCTS {
 impl MCTS {
     pub fn new(seed: u64) -> Self {
         Self {
+            // To prevent overflow check: 2^VISITS_BITS > 2^GEN_BITS * iterations_per_move
             iterations_per_move: 200_000,
             ucb_const: 1.414,
             generation: 0,
@@ -81,7 +87,7 @@ impl MCTS {
 
         // Choose best move: the most visited child.
         let mut moves = Vec::with_capacity(MAX_MOVES);
-        root.get_legal_moves(&mut moves, &self.z_table);
+        root.get_legal_moves(&mut moves);
         let mut moves_not_cached = 0;
 
         let mut max_visits = 0;
@@ -160,17 +166,12 @@ impl MCTS {
     ///        SELECTION        
     /// ========================
     /// Returns the result with the perspective of state.player
-    ///  1 if state.player won.
-    /// -1 if state.player lost.
-    ///  0 if it was a draw.
     fn selection(&mut self, state: &GameState, node_visits: usize) -> isize {
         // === TERMINAL CHECKS ===
-        // If game is over.
-        match state.check_game_over(&self.z_table) {
-            // If we are at a terminal node during selection,
-            // it means the *previous* player made a winning move
-            Some('T') => return 0, // Draw
-            Some(_) => return -1, // Loss
+        match state.check_game_over() {
+            Some('D') => return DRAW,
+            Some(winner) if winner == state.player => return WIN,
+            Some(_) => return LOSS,
             None => {},
         }
 
@@ -186,7 +187,7 @@ impl MCTS {
         {
             // === COMPUTE UCB ===
             let mut moves = Vec::with_capacity(MAX_MOVES);
-            state.get_legal_moves(&mut moves, &self.z_table);
+            state.get_legal_moves(&mut moves);
 
             let mut max_ucb_value = -1.0;
             let mut best_move: Option<[usize; 4]> = None;
@@ -248,7 +249,8 @@ impl MCTS {
             } else {
                 // No moves available. Should be caught by terminal check.
                 println!("Error: Selection step has no moves but game over wasn't caught.");
-                return -1; // Loss for current player.
+                if state.player == 'W' { return LOSS; }
+                else { return WIN; }
             }
         }
         
@@ -303,20 +305,20 @@ impl MCTS {
         // Play random moves until the game is over.
         loop {
             // Check game over.
-            if let Some(winner) = temp_state.check_game_over(&self.z_table) {
-                if winner == 'T' { return 0; }
-                else if winner == state.player { return 1; }
-                else { return -1; }
+            if let Some(winner) = temp_state.check_game_over() {
+                if winner == 'T' { return DRAW; }
+                else if winner == state.player { return WIN; }
+                else { return LOSS; }
             }
 
             // Available moves.
-            temp_state.get_legal_moves(&mut moves, &self.z_table);
+            temp_state.get_legal_moves(&mut moves);
             if moves.is_empty() {
                 println!("Error: Simulation step has no moves but game over wasn't caught.");
                 println!("Applying rule 9 anyways...\n");
                 // Current player loses (Rule 9: If a player cannot move, he loses the game).
-                if state.player == temp_state.player { return -1; }
-                else { return 1; }
+                if state.player == temp_state.player { return LOSS; }
+                else { return WIN; }
             }
 
             // Random move.
