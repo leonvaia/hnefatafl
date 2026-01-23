@@ -18,6 +18,11 @@ const CORNERS: u64 = (1 << 0) | (1 << 6) | (1 << 42) | (1 << 48);
 const THRONE: u64 = 1 << 24;
 /// Restricted squares (Corners + Throne)
 const RESTRICTED: u64 = CORNERS | THRONE;
+/// Edges:
+const ROW_0_MASK: u64 = 0x7F;
+const ROW_6_MASK: u64 = 0x7F << 42;
+const COL_0_MASK: u64 = (1<<0)|(1<<7)|(1<<14)|(1<<21)|(1<<28)|(1<<35)|(1<<42);
+const COL_6_MASK: u64 = COL_0_MASK << 6;
 
 /// Board representation used in history.
 /// (black_mask, white_mask, king_mask)
@@ -627,6 +632,134 @@ impl GameState {
         
         // Thresholds
         attackers <= 2 && defenders <= 1
+    }
+
+    // =================================
+    //            HEURISTICS
+    // =================================
+
+    /// Returns true if from the current state white can win, whatever black does.
+    pub fn heuristic_wins_w(&self) -> bool {
+        // 1. King to corner.
+        if self.heuristic_king_to_corner().0 {
+            return true;
+        }
+        // 2. King to empty edge.
+        if self.heuristic_king_empty_edge().0 {
+            return true;
+        }
+        false
+    }
+
+    /// 1. The King has a clear path to a corner.
+    pub fn heuristic_king_to_corner(&self) -> (bool, Option<[usize; 4]>) {
+        let k_idx = self.king_piece.trailing_zeros() as usize;
+        if k_idx >= 64 { return (false, None); }
+
+        let r = k_idx / 7;
+        let c = k_idx % 7;
+        let occupied = self.black_pieces | self.white_pieces | self.king_piece;
+
+        // Helper to check linear path (exclusive of start, inclusive of end)
+        let check_path = |start_idx: usize, step: isize, count: usize| -> bool {
+            let mut curr = start_idx as isize + step;
+            for _ in 0..count {
+                if (occupied & (1u64 << curr)) != 0 { return false; }
+                curr += step;
+            }
+            true
+        };
+
+        // 1. Top-Left (0,0)
+        // Check West (if on row 0)
+        if r == 0 && c > 0 {
+            if check_path(k_idx, -1, c) { return (true, Some([r, c, 0, 0])); }
+        }
+        // Check North (if on col 0)
+        if c == 0 && r > 0 {
+            if check_path(k_idx, -7, r) { return (true, Some([r, c, 0, 0])); }
+        }
+
+        // 2. Top-Right (0,6)
+        // Check East (if on row 0)
+        if r == 0 && c < 6 {
+            if check_path(k_idx, 1, 6 - c) { return (true, Some([r, c, 0, 6])); }
+        }
+        // Check North (if on col 6)
+        if c == 6 && r > 0 {
+            if check_path(k_idx, -7, r) { return (true, Some([r, c, 0, 6])); }
+        }
+
+        // 3. Bottom-Left (6,0)
+        // Check West (if on row 6)
+        if r == 6 && c > 0 {
+            if check_path(k_idx, -1, c) { return (true, Some([r, c, 6, 0])); }
+        }
+        // Check South (if on col 0)
+        if c == 0 && r < 6 {
+            if check_path(k_idx, 7, 6 - r) { return (true, Some([r, c, 6, 0])); }
+        }
+
+        // 4. Bottom-Right (6,6)
+        // Check East (if on row 6)
+        if r == 6 && c < 6 {
+            if check_path(k_idx, 1, 6 - c) { return (true, Some([r, c, 6, 6])); }
+        }
+        // Check South (if on col 6)
+        if c == 6 && r < 6 {
+            if check_path(k_idx, 7, 6 - r) { return (true, Some([r, c, 6, 6])); }
+        }
+
+        (false, None)
+    }
+
+    /// 2. The King has a clear path to an empty edge (cannot be protected by black anymore).
+    pub fn heuristic_king_empty_edge(&self) -> (bool, Option<[usize; 4]>) {
+        let k_idx = self.king_piece.trailing_zeros() as usize;
+        if k_idx >= 64 { return (false, None); }
+
+        let r = k_idx / 7;
+        let c = k_idx % 7;
+        let occupied = self.black_pieces | self.white_pieces | self.king_piece;
+
+        let check_path = |start_idx: usize, step: isize, count: usize| -> bool {
+            let mut curr = start_idx as isize + step;
+            for _ in 0..count {
+                if (occupied & (1u64 << curr)) != 0 { return false; }
+                curr += step;
+            }
+            true
+        };
+
+        // 1. Top Edge (Row 0) -> Move to (0, c)
+        if (occupied & ROW_0_MASK) == 0 {
+            if check_path(k_idx, -7, r) { 
+                return (true, Some([r, c, 0, c])); 
+            }
+        }
+
+        // 2. Bottom Edge (Row 6) -> Move to (6, c)
+        if (occupied & ROW_6_MASK) == 0 {
+            if check_path(k_idx, 7, 6 - r) { 
+                return (true, Some([r, c, 6, c])); 
+            }
+        }
+
+        // 3. Left Edge (Col 0) -> Move to (r, 0)
+        if (occupied & COL_0_MASK) == 0 {
+            if check_path(k_idx, -1, c) { 
+                return (true, Some([r, c, r, 0])); 
+            }
+        }
+
+        // 4. Right Edge (Col 6) -> Move to (r, 6)
+        if (occupied & COL_6_MASK) == 0 {
+            if check_path(k_idx, 1, 6 - c) { 
+                return (true, Some([r, c, r, 6])); 
+            }
+        }
+
+        (false, None)
     }
 
     // =================================

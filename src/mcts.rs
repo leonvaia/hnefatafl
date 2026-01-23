@@ -82,6 +82,18 @@ impl MCTS {
 
     /// Get best move according to MCTS.
     fn get_move(&mut self, root: &GameState) -> [usize; 4] {
+        // Heuristics.
+        if root.player == 'W' {
+            // 1.
+            if let (true, Some(winning_move)) = root.heuristic_king_to_corner() {
+                 return winning_move;
+            }
+            // 2.
+            if let (true, Some(winning_move)) = root.heuristic_king_empty_edge() {
+                 return winning_move;
+             }
+        }
+
         // Search game tree.
         self.start_search(root);
 
@@ -175,9 +187,10 @@ impl MCTS {
             None => {},
         }
 
-        // If heuristic_wins_B
-
-        // If heuristic_wins_W
+        // === HEURISTICS ===
+        if state.heuristic_wins_w() {
+            return if state.player == 'W' { WIN } else { LOSS };
+        }
 
         // === SELECTION ===
         let selected_move: [usize; 4];
