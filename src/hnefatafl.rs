@@ -108,20 +108,21 @@ impl GameState {
     }
 
     /// Display game board in ASCII art.
-    pub fn display(&self) {
-        println!("  0 1 2 3 4 5 6");
+    // Inside your impl GameState
+    pub fn display<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        writeln!(writer, "  0 1 2 3 4 5 6")?;
         for r in 0..7 {
-            print!("{}", r);
+            write!(writer, "{}", r)?;
             for c in 0..7 {
-                let mask = 1 << (r * 7 + c);
-                if (self.black_pieces & mask) != 0 { print!(" B"); }
-                else if (self.white_pieces & mask) != 0 { print!(" W"); }
-                else if (self.king_piece & mask) != 0 { print!(" K"); }
-                // else if (THRONE & mask) != 0 { print!(" X"); } // Optional: mark throne
-                else { print!(" ."); }
+                let mask = 1u64 << (r * 7 + c);
+                if (self.black_pieces & mask) != 0 { write!(writer, " B")?; }
+                else if (self.white_pieces & mask) != 0 { write!(writer, " W")?; }
+                else if (self.king_piece & mask) != 0 { write!(writer, " K")?; }
+                else { write!(writer, " .")?; }
             }
-            println!();
+            writeln!(writer)?;
         }
+        Ok(())
     }
 
     /// Helpeer to get bit index.
@@ -602,13 +603,13 @@ impl GameState {
     }
     /// Same as above, but prints the repetition distance.
     /// Used only for the actual game being played, for analysis purposes.
-    pub fn check_game_over_log(&self) -> Option<char> {
+    pub fn check_game_over_log<W: Write>(&self, writer: &mut W) -> Option<char> {
         if (self.king_piece & CORNERS) != 0 { return Some('W'); }
         if self.king_piece == 0 { return Some('B'); }
         if self.repetition {
             if let Some(dist) = self.repetition_dist {
                 // Only print if distance in full moves (plies / 2) is > 3.
-                println!("Repetition detected! The state first occurred {} plies ago.", dist);
+                writeln!(writer, "Repetition detected! The state first occurred {} plies ago.", dist).expect("Could not write repetition message to buffer.");
             }
             return Some('B');
         }
@@ -768,11 +769,11 @@ impl GameState {
 
     /// Gets a move from CLI.
     /// If valid then moves the piece.
-    pub fn human_move(&mut self, z_table: &Zobrist) {
+    pub fn human_move<W: Write>(&mut self, z_table: &Zobrist, writer: &mut W) {
         loop {
-            println!("\nCurrent Player: {}", self.player);
-            print!("Enter move: ");
-
+            writeln!(writer, "\nCurrent Player: {}", self.player).expect("could not write to output");
+            write!(writer, "Enter move: ").expect("could not write to output");
+            writer.flush().expect("Flush failed");
             // Get input string.
             io::stdout().flush().unwrap();
             let mut input = String::new();
@@ -796,7 +797,7 @@ impl GameState {
                     }
                 }
                 Err(_) => {
-                    println!("Invalid input. Try again.\n");
+                    writeln!(writer, "Invalid input. Try again.\n").expect("could not write to output");
                     continue;
                 }
             }
@@ -846,7 +847,7 @@ impl GameState {
         // Restricted squares may only be occupied by the king.
         if self.is_restricted_violation(er, ec, src) { return false; }
         
-        println!("Valid move.\n");
+        // println!("Valid move.\n");
         true
     }
 }

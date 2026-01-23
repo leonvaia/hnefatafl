@@ -4,7 +4,7 @@
 //! following condition is true:
 //! 2^VISITS_BITS > 2^GEN_BITS * iterations_per_move
 
-use rand::thread_rng;
+use std::io::Write;
 use rand::prelude::*;
 
 use crate::zobrist::Zobrist;
@@ -75,13 +75,13 @@ impl MCTS {
 /// ======================
 impl MCTS {
     /// Apply engine move to state.
-    pub fn computer_move(&mut self, state: &mut GameState) {
-        let m = self.get_move(&state);
+    pub fn computer_move<W: Write>(&mut self, state: &mut GameState, writer: &mut W) {
+        let m = self.get_move(&state, writer);
         state.move_piece(&m, &self.z_table);
     }
 
     /// Get best move according to MCTS.
-    fn get_move(&mut self, root: &GameState) -> [usize; 4] {
+    fn get_move<W: Write>(&mut self, root: &GameState, writer: &mut W) -> [usize; 4] {
         // Heuristics.
         if root.player == 'W' {
             // 1.
@@ -95,7 +95,7 @@ impl MCTS {
         }
 
         // Search game tree.
-        self.start_search(root);
+        self.start_search(root, writer);
 
         // Choose best move: the most visited child.
         let mut moves = Vec::with_capacity(MAX_MOVES);
@@ -118,19 +118,19 @@ impl MCTS {
                 moves_not_cached += 1;
             }
         }
-        println!("Number of child moves not cached: {}", moves_not_cached);
+        writeln!(writer, "Number of child moves not cached: {}", moves_not_cached).expect("could not write to output");
         
         if let Some(mv) = best_move {
             return mv;
         } else {
-            println!("No move found in the cache. Returning random move.");
-            let mut rng = thread_rng();
+            writeln!(writer, "No move found in the cache. Returning random move.").expect("could not write to file");
+            let mut rng = rand::rng();
             let random_move = moves.choose(&mut rng).unwrap(); // returns a reference
             return *random_move;
         }
     }
 
-    fn start_search(&mut self, root: &GameState) {
+    fn start_search<W: Write>(&mut self, root: &GameState, writer: &mut W) {
         self.increase_generation();
 
         // Retrieve stats for root.
@@ -149,7 +149,7 @@ impl MCTS {
         // Search game tree.
         for _ in 1..self.iterations_per_move {
             // Selection and Backpropagation to the root.
-            root_wins += self.selection(root, root_visits);
+            root_wins += self.selection(root, root_visits, writer);
             root_visits += 1;
         }
 
@@ -164,21 +164,21 @@ impl MCTS {
                 root_entry.set_n_visits(root_visits);
                 root_entry.set_n_wins(root_wins);
             } else {
-                println!("Error: root not added to transpositions table.");
+                writeln!(writer, "Error: root not added to transpositions table.").expect("could not write to output");
             }
         }
         if increase_collisions { self.increase_collisions(); }
 
         // The following might be useful to evaluate how the algorithm is performing in the current game.
-        println!("Exploration finished with {} wins for the current player.", root_wins);
-        println!("Number of total collisions {}", self.collisions);
+        writeln!(writer, "Exploration finished with {} wins for the current player.", root_wins).expect("could not write to output");
+        writeln!(writer, "Number of total collisions {}", self.collisions).expect("could not write to output");
     }
 
     /// ========================
     ///        SELECTION        
     /// ========================
     /// Returns the result with the perspective of state.player
-    fn selection(&mut self, state: &GameState, node_visits: usize) -> isize {
+    fn selection<W: Write>(&mut self, state: &GameState, node_visits: usize, writer: &mut W) -> isize {
         // === TERMINAL CHECKS ===
         match state.check_game_over() {
             Some('D') => return DRAW,
@@ -249,7 +249,7 @@ impl MCTS {
             // === CHOICE ===
             if !unvisited_moves.is_empty() {
                 // Pick random unvisited child.
-                let idx = rand::thread_rng().gen_range(0..unvisited_moves.len());
+                let idx = rand::rng().random_range(0..unvisited_moves.len());
                 let (m, h) = unvisited_moves[idx].clone();
                 selected_move = m;
                 selected_hash = h;
@@ -261,7 +261,7 @@ impl MCTS {
                 is_expansion_phase = false;
             } else {
                 // No moves available. Should be caught by terminal check.
-                println!("Error: Selection step has no moves but game over wasn't caught.");
+                writeln!(writer, "Error: Selection step has no moves but game over wasn't caught.").expect("could not write to output");
                 if state.player == 'W' { return LOSS; }
                 else { return WIN; }
             }
@@ -285,7 +285,7 @@ impl MCTS {
             result_for_child_node = self.simulation(&next_state);
         } else {
             // === RECURSIVE SELECTION ===
-            result_for_child_node = self.selection(&next_state, best_move_visits);
+            result_for_child_node = self.selection(&next_state, best_move_visits, writer);
         }
 
         // === BACKPROPAGATION ===
@@ -297,8 +297,8 @@ impl MCTS {
                 entry.add_n_visits(1);
                 entry.add_n_wins(result_for_child_node);
             } else {
-                println!("Error: Entry wasn't found during backpropagation.");
-                println!("This means there is a problem with the overwriting policy.");
+                writeln!(writer, "Error: Entry wasn't found during backpropagation.").expect("could not write to output");
+                writeln!(writer, "This means there is a problem with the overwriting policy.").expect("could not write to output");
             }
         }
 
@@ -313,7 +313,7 @@ impl MCTS {
     fn simulation(&self, state: &GameState) -> isize {
         let mut temp_state = state.clone();
         let mut moves = Vec::with_capacity(MAX_MOVES);
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
 
         // Play random moves until the game is over.
         loop {
