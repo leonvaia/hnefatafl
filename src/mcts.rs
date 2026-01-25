@@ -58,7 +58,7 @@ impl MCTS {
     #[inline]
     fn increase_generation(&mut self) {
         self.generation += 1;
-        if self.generation > generation_range { // = generation - generation_range
+        if self.generation > self.generation_range { // = generation - generation_range
             self.generation_bound += 1;
         }
         if self.generation >= MAX_GEN {
