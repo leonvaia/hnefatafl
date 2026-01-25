@@ -21,7 +21,7 @@ enum GameMode {
 
 const BOT_SIDE: char = 'W'; // or 'W'
 
-fn play_game(engine: &mut MCTS, mode: GameMode, to_file: bool, file_name: &str) {
+fn play_game(engine: &mut MCTS, mode: GameMode, bot_side: char, to_file: bool, file_name: &str) {
     let mut game = GameState::new(&engine.z_table);
 
     // 1. Create the base writer (Stdout or File)
@@ -35,6 +35,7 @@ fn play_game(engine: &mut MCTS, mode: GameMode, to_file: bool, file_name: &str) 
     let mut buffered_writer = BufWriter::new(writer);
 
     let time = Instant::now();
+    let mut moves_count = 0;
 
     loop {
         // 3. Pass the buffered writer to display
@@ -57,7 +58,7 @@ fn play_game(engine: &mut MCTS, mode: GameMode, to_file: bool, file_name: &str) 
             }
 
             GameMode::HumanVsBot => {
-                if game.player == BOT_SIDE {
+                if game.player == bot_side {
                     write!(buffered_writer, "Bot is thinking...").expect("could not write to output");
                     buffered_writer.flush().expect("Flush failed");
 
@@ -68,7 +69,7 @@ fn play_game(engine: &mut MCTS, mode: GameMode, to_file: bool, file_name: &str) 
             }
 
             GameMode::BotVsRandom => {
-                if game.player == BOT_SIDE {
+                if game.player == bot_side {
                     write!(buffered_writer, "Bot is thinking...").expect("could not write to output");
                     buffered_writer.flush().expect("Flush failed");
 
@@ -83,17 +84,19 @@ fn play_game(engine: &mut MCTS, mode: GameMode, to_file: bool, file_name: &str) 
                 }
             }
         }
+        moves_count += 1;
     }
     let elapsed_time = Instant::now() - time;
+    writeln!(buffered_writer, "Total moves played: {}", moves_count).expect("could not write to output");
     writeln!(buffered_writer, "Total time for game: {}", elapsed_time.as_secs_f64()).expect("could not write to output");
     buffered_writer.flush().expect("Flush failed");
 }
 
-fn play_games(mut engine: &mut MCTS, mode: GameMode, game_count: usize, folder_name: &str) {
+fn play_games(mut engine: &mut MCTS, mode: GameMode, bot_side: char, game_count: usize, folder_name: &str) {
     fs::create_dir(folder_name).expect("could not create folder");
     for i in 0..game_count {
         let file_name = folder_name.to_string() + "/" + &i.to_string() + ".txt";
-        play_game(&mut engine, mode,true, &file_name);
+        play_game(&mut engine, mode, bot_side,true, &file_name);
     }
 }
 
@@ -132,9 +135,10 @@ fn main() {
         io::stdin().read_line(&mut input).unwrap();
 
         let game_count : usize = input.trim().parse().expect("amount of games has to be given as a number");
-        play_games(&mut engine, mode, game_count, "random_vs_engine_on_white");
+        play_games(&mut engine, mode, 'W', game_count, "random_vs_engine_on_white");
+        play_games(&mut engine, mode, 'B', game_count, "random_vs_engine_on_black");
     } else {
-        play_game(&mut engine, mode, false, "");
+        play_game(&mut engine, mode, 'W', false, "");
     }
 }
 
