@@ -7,6 +7,7 @@ pub mod mcts;
 use std::fs::File;
 use std::{fs, io};
 use std::io::{BufWriter, Write};
+use std::time::Instant;
 use rand::prelude::IndexedRandom;
 use hnefatafl::GameState;
 use mcts::MCTS;
@@ -32,6 +33,8 @@ fn play_game(engine: &mut MCTS, mode: GameMode, to_file: bool, file_name: &str) 
 
     // 2. Wrap it in a BufWriter for efficiency
     let mut buffered_writer = BufWriter::new(writer);
+
+    let time = Instant::now();
 
     loop {
         // 3. Pass the buffered writer to display
@@ -81,12 +84,14 @@ fn play_game(engine: &mut MCTS, mode: GameMode, to_file: bool, file_name: &str) 
             }
         }
     }
+    let elapsed_time = Instant::now() - time;
+    writeln!(buffered_writer, "Total time for game: {}", elapsed_time.as_secs_f64()).expect("could not write to output");
 }
 
 fn play_games(mut engine: &mut MCTS, mode: GameMode, game_count: usize, folder_name: &str) {
     fs::create_dir(folder_name).expect("could not create folder");
     for i in 0..game_count {
-        let file_name = folder_name.to_string() + "/" + &i.to_string();
+        let file_name = folder_name.to_string() + "/" + &i.to_string() + ".txt";
         play_game(&mut engine, mode,true, &file_name);
     }
 }
