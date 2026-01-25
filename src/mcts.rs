@@ -75,9 +75,9 @@ impl MCTS {
 /// ======================
 impl MCTS {
     /// Apply engine move to state.
-    pub fn computer_move<W: Write>(&mut self, state: &mut GameState, mut writer: &mut W) {
+    pub fn computer_move<W: Write>(&mut self, state: &mut GameState, writer: &mut W) {
         let m = self.get_move(&state, writer);
-        state.move_piece(&m, &self.z_table, &mut writer);
+        state.move_piece(&m, &self.z_table, writer);
     }
 
     /// Get best move according to MCTS.
@@ -178,7 +178,7 @@ impl MCTS {
     ///        SELECTION        
     /// ========================
     /// Returns the result with the perspective of state.player
-    fn selection<W: Write>(&mut self, state: &GameState, node_visits: usize, mut writer: &mut W) -> isize {
+    fn selection<W: Write>(&mut self, state: &GameState, node_visits: usize, writer: &mut W) -> isize {
         // === TERMINAL CHECKS ===
         match state.check_game_over() {
             Some('D') => return DRAW,
@@ -269,7 +269,7 @@ impl MCTS {
         
         // === EXECUTE MOVE ===
         let mut next_state = state.clone();
-        next_state.move_piece(&selected_move, &self.z_table, &mut writer);
+        next_state.move_piece(&selected_move, &self.z_table, writer);
         let result_for_child_node: isize;
 
         if is_expansion_phase {
@@ -282,10 +282,10 @@ impl MCTS {
             }
 
             // === SIMULATION ===
-            result_for_child_node = self.simulation(&next_state, &mut writer);
+            result_for_child_node = self.simulation(&next_state, writer);
         } else {
             // === RECURSIVE SELECTION ===
-            result_for_child_node = self.selection(&next_state, best_move_visits, &mut writer);
+            result_for_child_node = self.selection(&next_state, best_move_visits, writer);
         }
 
         // === BACKPROPAGATION ===
@@ -310,7 +310,7 @@ impl MCTS {
     ///        SIMULATION        
     /// =========================
     /// Returns the result with the perspective of state.player
-    fn simulation<W: Write>(&self, state: &GameState, mut writer: &mut W) -> isize {
+    fn simulation<W: Write>(&self, state: &GameState, writer: &mut W) -> isize {
         let mut temp_state = state.clone();
         let mut moves = Vec::with_capacity(MAX_MOVES);
         let mut rng = rand::rng();
@@ -338,7 +338,7 @@ impl MCTS {
             let random_move = moves.choose(&mut rng).unwrap(); // returns a reference
 
             // Apply move.
-            temp_state.move_piece(random_move, &self.z_table, &mut writer);
+            temp_state.move_piece(random_move, &self.z_table, writer);
         }
     }
 }

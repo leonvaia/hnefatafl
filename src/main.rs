@@ -59,7 +59,7 @@ fn play_game(engine: &mut MCTS, mode: GameMode, bot_side: char, to_file: bool, f
 
             GameMode::HumanVsBot => {
                 if game.player == bot_side {
-                    write!(buffered_writer, "Bot is thinking...").expect("could not write to output");
+                    writeln!(buffered_writer, "Bot is thinking...").expect("could not write to output");
                     buffered_writer.flush().expect("Flush failed");
 
                     engine.computer_move(&mut game, &mut buffered_writer);
@@ -70,7 +70,7 @@ fn play_game(engine: &mut MCTS, mode: GameMode, bot_side: char, to_file: bool, f
 
             GameMode::BotVsRandom => {
                 if game.player == bot_side {
-                    write!(buffered_writer, "Bot is thinking...").expect("could not write to output");
+                    writeln!(buffered_writer, "Bot is thinking...").expect("could not write to output");
                     buffered_writer.flush().expect("Flush failed");
 
                     engine.computer_move(&mut game, &mut buffered_writer);
