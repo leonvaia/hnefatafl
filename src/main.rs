@@ -92,9 +92,10 @@ fn play_game(engine: &mut MCTS, mode: GameMode, bot_side: char, to_file: bool, f
     buffered_writer.flush().expect("Flush failed");
 }
 
-fn play_games(mut engine: &mut MCTS, mode: GameMode, bot_side: char, game_count: usize, folder_name: &str) {
+fn play_games(mode: GameMode, bot_side: char, game_count: usize, folder_name: &str) {
     fs::create_dir(folder_name).expect("could not create folder");
     for i in 0..game_count {
+        let mut engine = MCTS::new(0xCAFEBABE);
         let file_name = folder_name.to_string() + "/" + &i.to_string() + ".txt";
         play_game(&mut engine, mode, bot_side,true, &file_name);
     }
@@ -117,8 +118,6 @@ fn main() {
     println!("Enter positions in the following format:");
     println!("start_row start_col end_row end_col");
 
-    let mut engine = MCTS::new(0xCAFEBABE);
-
     println!("For games between two humans type 2");
     let mut input = String::new();
     io::stdin().read_line(&mut input).unwrap();
@@ -135,9 +134,10 @@ fn main() {
         io::stdin().read_line(&mut input).unwrap();
 
         let game_count : usize = input.trim().parse().expect("amount of games has to be given as a number");
-        play_games(&mut engine, mode, 'W', game_count, "random_vs_engine_on_white");
-        play_games(&mut engine, mode, 'B', game_count, "random_vs_engine_on_black");
+        play_games(mode, 'W', game_count, "random_vs_engine_on_white");
+        play_games(mode, 'B', game_count, "random_vs_engine_on_black");
     } else {
+        let mut engine = MCTS::new(0xCAFEBABE);
         play_game(&mut engine, mode, 'W', false, "");
     }
 }
