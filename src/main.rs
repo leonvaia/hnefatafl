@@ -80,7 +80,7 @@ fn play_game(engine: &mut MCTS, mode: GameMode, bot_side: char, to_file: bool, f
                     let mut moves = Vec::with_capacity(mcts::MAX_MOVES);
                     game.get_legal_moves(&mut moves);
                     let random_move = moves.choose(&mut rng).unwrap();
-                    game.move_piece(random_move, &engine.z_table);
+                    game.move_piece(random_move, &engine.z_table, &mut buffered_writer);
                 }
             }
         }
