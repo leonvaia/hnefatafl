@@ -342,7 +342,7 @@ impl GameState {
     /// The logic assumes the move to be legal.
     /// coords = [start_row, start_col, end_row, end_col]
     #[inline]
-    pub fn move_piece<W: Write>(&mut self, coords: &[usize; 4], z_table: &Zobrist, writer: &mut W) {
+    pub fn move_piece<W: Write>(&mut self, coords: &[usize; 4], z_table: &Zobrist, is_sim_move: bool, writer: &mut W) {
         let (sr, sc, er, ec) = (coords[0], coords[1], coords[2], coords[3]);
         let src_mask = 1 << Self::idx(sr, sc);
         let dst_mask = 1 << Self::idx(er, ec);
@@ -370,7 +370,7 @@ impl GameState {
         self.hash ^= z_table.black_to_move;
         
         // Apply captures.
-        self.apply_captures_bits(er, ec, p_idx, z_table, writer);
+        self.apply_captures_bits(er, ec, p_idx, z_table, is_sim_move, writer);
 
         // Update history (Sorted Insert).
         let current_state_key = (self.black_pieces, self.white_pieces, self.king_piece);
@@ -409,7 +409,7 @@ impl GameState {
 
     /// Apply all captures.
     #[inline]
-    fn apply_captures_bits<W: Write>(&mut self, r: usize, c: usize, mover_type: usize, z_table: &Zobrist, writer: &mut W) {
+    fn apply_captures_bits<W: Write>(&mut self, r: usize, c: usize, mover_type: usize, z_table: &Zobrist, is_sim_move: bool, writer: &mut W) {
         // mover_type: 0=B, 1=W, 2=K
         let dst_idx = Self::idx(r, c);
 
@@ -432,7 +432,7 @@ impl GameState {
                  if self.check_king_captured_sim(self.black_pieces, self.king_piece) {
                      self.king_piece &= !mask; // Remove King from board.
                      self.hash ^= z_table.table[v_idx/7][v_idx%7][2];
-                     writeln!(writer, "King got captured").expect("could not write to output");
+                     if !is_sim_move { writeln!(writer, "King got captured").expect("could not write to output"); }
                  }
                  continue;
              }
@@ -444,11 +444,11 @@ impl GameState {
                      if is_b { 
                          self.black_pieces &= !mask; 
                          self.hash ^= z_table.table[v_idx/7][v_idx%7][0];
-                         writeln!(writer, "Black piece got captured").expect("could not write to output");
+                         if !is_sim_move { writeln!(writer, "Black piece got captured").expect("could not write to output"); }
                      } else { 
                          self.white_pieces &= !mask;
                          self.hash ^= z_table.table[v_idx/7][v_idx%7][1];
-                         writeln!(writer, "White piece got captured").expect("could not write to output");
+                         if !is_sim_move { writeln!(writer, "White piece got captured").expect("could not write to output"); }
                      }
                  }
              }
@@ -793,7 +793,7 @@ impl GameState {
                 Ok(coords) => {
                     // Check if the move is valid and do it.
                     if self.is_legal_move_human(&coords) {
-                        self.move_piece(&coords, &z_table, writer);
+                        self.move_piece(&coords, &z_table, false, writer);
                         return;
                     } else {
                         continue;

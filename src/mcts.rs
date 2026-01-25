@@ -77,7 +77,7 @@ impl MCTS {
     /// Apply engine move to state.
     pub fn computer_move<W: Write>(&mut self, state: &mut GameState, writer: &mut W) {
         let m = self.get_move(&state, writer);
-        state.move_piece(&m, &self.z_table, writer);
+        state.move_piece(&m, &self.z_table, true, writer);
     }
 
     /// Get best move according to MCTS.
@@ -269,7 +269,7 @@ impl MCTS {
         
         // === EXECUTE MOVE ===
         let mut next_state = state.clone();
-        next_state.move_piece(&selected_move, &self.z_table, writer);
+        next_state.move_piece(&selected_move, &self.z_table, true, writer);
         let result_for_child_node: isize;
 
         if is_expansion_phase {
@@ -338,7 +338,7 @@ impl MCTS {
             let random_move = moves.choose(&mut rng).unwrap(); // returns a reference
 
             // Apply move.
-            temp_state.move_piece(random_move, &self.z_table, writer);
+            temp_state.move_piece(random_move, &self.z_table, true, writer);
         }
     }
 }
