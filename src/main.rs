@@ -86,6 +86,7 @@ fn play_game(engine: &mut MCTS, mode: GameMode, to_file: bool, file_name: &str) 
     }
     let elapsed_time = Instant::now() - time;
     writeln!(buffered_writer, "Total time for game: {}", elapsed_time.as_secs_f64()).expect("could not write to output");
+    buffered_writer.flush().expect("Flush failed");
 }
 
 fn play_games(mut engine: &mut MCTS, mode: GameMode, game_count: usize, folder_name: &str) {
