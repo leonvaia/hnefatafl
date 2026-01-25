@@ -94,11 +94,14 @@ fn play_game(engine: &mut MCTS, mode: GameMode, bot_side: char, to_file: bool, f
 
 fn play_games(mode: GameMode, bot_side: char, game_count: usize, folder_name: &str) {
     fs::create_dir(folder_name).expect("could not create folder");
+    let time = Instant::now();
     for i in 0..game_count {
         let mut engine = MCTS::new(0xCAFEBABE);
         let file_name = folder_name.to_string() + "/" + &i.to_string() + ".txt";
         play_game(&mut engine, mode, bot_side,true, &file_name);
     }
+    let elapsed_time = Instant::now() - time;
+    println!("Total time for {} games: {}", game_count, elapsed_time.as_secs_f64());
 }
 
 fn announce_result<W: Write>(result: char, writer: &mut W) -> io::Result<()> {
@@ -134,7 +137,9 @@ fn main() {
         io::stdin().read_line(&mut input).unwrap();
 
         let game_count : usize = input.trim().parse().expect("amount of games has to be given as a number");
+        println!("Starting {} games of random vs engine on white", game_count);
         play_games(mode, 'W', game_count, "random_vs_engine_on_white");
+        println!("Starting {} games of random vs engine on black", game_count);
         play_games(mode, 'B', game_count, "random_vs_engine_on_black");
     } else {
         let mut engine = MCTS::new(0xCAFEBABE);
