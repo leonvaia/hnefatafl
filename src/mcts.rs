@@ -29,7 +29,8 @@ pub struct MCTS {
     
     // Used to age out old TT entries.
     generation: u32,
-    generation_bound: u32, // == generation - generation_range
+    generation_range: u32,
+    generation_bound: u32, // = generation - generation_range
 
     // Heavy data structures.
     transpositions: TT,
@@ -46,6 +47,7 @@ impl MCTS {
             iterations_per_move: 200_000,
             ucb_const: 1.414,
             generation: 0,
+            generation_range: 20,
             generation_bound: 0,
             transpositions: TT::new(),
             z_table: Zobrist::new(seed),
@@ -56,7 +58,7 @@ impl MCTS {
     #[inline]
     fn increase_generation(&mut self) {
         self.generation += 1;
-        if self.generation > self.iterations_per_move { // generation_range = iterations_per_move
+        if self.generation > generation_range { // = generation - generation_range
             self.generation_bound += 1;
         }
         if self.generation >= MAX_GEN {
