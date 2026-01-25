@@ -20,7 +20,7 @@ const DRAW: isize = -1;
 const MAX_GEN: u32 = 1 << 15; // = 2^GEN_BITS
 
 /// Maximum number of moves (estimated). Used to allocate the vector of legal moves efficiently.
-const MAX_MOVES: usize = 128;
+pub(crate) const MAX_MOVES: usize = 128;
 
 pub struct MCTS {
     // Configuration.
