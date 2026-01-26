@@ -171,15 +171,20 @@ fn play_bot_games(game_count: usize, folder_name: &str) {
     let black_iterations = if black_wins < white_wins { 400_000 } else if black_wins == white_wins { 100_000 } else { 200_000 };
     black_wins = 0;
     white_wins = 0;
+
+    let new_folder_name = format!("white_{}_iter_black_{}_iter", white_iterations, black_iterations);
+    fs::create_dir(&new_folder_name).expect("could not create folder");
+    
     println!("Another {} games will be played", game_count);
     println!("{} iterations per move for white", white_iterations);
     println!("{} iterations per move for black", black_iterations);
+
     let total_time = Instant::now();
     for i in 0..game_count {
         let mut engine_white = MCTS::new(0xCAFEBABE, white_iterations);
         let mut engine_black = MCTS::new(0xDEADBEEF, black_iterations);
 
-        let file_name = format!("{}/{}.txt", folder_name, i);
+        let file_name = format!("{}/{}.txt", &new_folder_name, i);
 
         let result = play_bot_vs_bot(&mut engine_white, &mut engine_black, true, &file_name);
         if result == 'B' { black_wins += 1; } else { white_wins += 1; }
@@ -233,7 +238,7 @@ fn main() {
 
         let game_count : usize = input.trim().parse().expect("amount of games has to be given as a number");
         println!("Starting {} games of engine vs engine", game_count);
-        play_bot_games(mode, game_count, "random_vs_engine_on_white");
+        play_bot_games(game_count, "equal_bots");
     } else {
         let mut engine = MCTS::new(0xCAFEBABE, 200_000);
         play_game(&mut engine, mode, 'W', false, "");
