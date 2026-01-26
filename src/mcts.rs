@@ -41,10 +41,10 @@ pub struct MCTS {
 }
 
 impl MCTS {
-    pub fn new(seed: u64) -> Self {
+    pub fn new(seed: u64, iterations: u32) -> Self {
         Self {
             // To prevent overflow check: 2^VISITS_BITS > 2^GEN_BITS * iterations_per_move
-            iterations_per_move: 200_000,
+            iterations_per_move: iterations,
             ucb_const: 1.414,
             generation: 0,
             generation_range: 20,
