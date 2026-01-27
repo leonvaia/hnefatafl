@@ -99,7 +99,7 @@ impl MCTS {
         // Search game tree.
         self.start_search(root, writer);
 
-        // Choose best move: the most visited child.
+        // === CHOOSE BEST MOVE: the most visited child ===
         let mut moves = Vec::with_capacity(MAX_MOVES);
         root.get_legal_moves(&mut moves);
         let mut moves_not_cached = 0;
@@ -107,29 +107,43 @@ impl MCTS {
         let mut max_visits = 0;
         let mut best_move: Option<[usize; 4]> = None;
 
+        // Consider only moves that do NOT result in a loss for current player.
         for m in &moves {
             let child_hash = root.next_hash(m, &self.z_table);
             let child_bucket = self.transpositions.get_bucket(child_hash);
             if let Some(entry) = child_bucket.get_entry(child_hash) {
-                // TO DO: when tie among most visited moves, choose randomly.
                 if entry.get_n_visits() > max_visits {
-                    max_visits = entry.get_n_visits();
-                    best_move = Some(m.clone());
+                    let mut next_state = root.clone();
+                    next_state.move_piece(m, &self.z_table, false, writer);
+                    if let Some(winner) = next_state.check_game_over() {
+                        if !(root.player != winner) {
+                            // Game is over and it is NOT a loss for current player. consider the move.
+                            max_visits = entry.get_n_visits();
+                            best_move = Some(m.clone());
+                        }
+                    } else {
+                        // Game isn't over, consider the move.
+                        max_visits = entry.get_n_visits();
+                        best_move = Some(m.clone());
+                    }
                 }
             } else {
                 moves_not_cached += 1;
             }
         }
-        writeln!(writer, "Number of child moves not cached: {}", moves_not_cached).expect("could not write to output");
         
+        writeln!(writer, "Number of child moves not cached: {}", moves_not_cached).expect("could not write to output");
         if let Some(mv) = best_move {
+            writeln!(writer, "Number of child moves not cached: {}", moves_not_cached).expect("could not write to output");
             return mv;
-        } else {
-            writeln!(writer, "No move found in the cache. Returning random move.").expect("could not write to file");
-            let mut rng = rand::rng();
-            let random_move = moves.choose(&mut rng).unwrap(); // returns a reference
-            return *random_move;
         }
+
+        // If all moves bring to a loss for current player, return a random one.
+        writeln!(writer, "All possible moves bring to game over.").expect("could not write to output");
+        writeln!(writer, "Returning random move.").expect("could not write to file");
+        let mut rng = rand::rng();
+        let random_move = moves.choose(&mut rng).unwrap(); // returns a reference
+        return *random_move;        
     }
 
     fn start_search<W: Write>(&mut self, root: &GameState, writer: &mut W) {
