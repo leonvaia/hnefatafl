@@ -506,26 +506,49 @@ impl GameState {
     /// Modify in place the vector of legal moves from the current state.
     /// Avoids allocating a vector each time (the function is called multiple times during Simulation).
     /// Algorithm from has_legal_move() modified to guarantee that indices are usize (and avoid casting).
-    pub fn get_legal_moves(&self, moves: &mut Vec<[usize; 4]>) {
+    /// If no_repetition is true and player is White, avoids moves that cause history repetition.
+    pub fn get_legal_moves(&self, moves: &mut Vec<[usize; 4]>, no_repetition: bool) {
         moves.clear();
         let occupied = self.black_pieces | self.white_pieces | self.king_piece;
         let my_pieces = if self.player == 'B' { self.black_pieces } 
                         else { self.white_pieces | self.king_piece };
+
+        let filter_repetition = no_repetition && self.player == 'W';
+
+        // Function used below.
+        let mut add_move = |r, c, er, ec| {
+            // Repetition check logic.
+            if filter_repetition {
+                let coords = [r, c, er, ec];
+                let (nb, nw, nk) = self.predict_next_boards(&coords);
+                
+                // Binary search in history.
+                let target_key = (nb, nw, nk);
+                let slice = &self.history[0..self.history_len];
+                let found = slice.binary_search_by(|entry| {
+                    entry.0.cmp(&target_key.0)
+                        .then(entry.1.cmp(&target_key.1))
+                        .then(entry.2.cmp(&target_key.2))
+                }).is_ok();
+
+                // If the move is a repetition, we skip it.
+                if found { return; }
+            }
+
+            moves.push([r, c, er, ec]);
+        };
 
         for i in 0..TOTAL_SQUARES {
             if (my_pieces & (1 << i)) != 0 {
                 let r = i / 7;
                 let c = i % 7;
                 
-                // Directions helper
-                // We inline loops for performance
-                
                 // UP
                 if r > 0 {
                     for rr in (0..r).rev() {
                         let dest = Self::idx(rr, c);
                         if (occupied & (1 << dest)) != 0 { break; } 
-                        if !self.is_restricted_violation(rr, c, i) { moves.push([r, c, rr, c]); }
+                        if !self.is_restricted_violation(rr, c, i) { add_move(r, c, rr, c); }
                     }
                 }
                 // DOWN
@@ -533,7 +556,7 @@ impl GameState {
                     for rr in r+1..7 {
                         let dest = Self::idx(rr, c);
                         if (occupied & (1 << dest)) != 0 { break; } 
-                        if !self.is_restricted_violation(rr, c, i) { moves.push([r, c, rr, c]); }
+                        if !self.is_restricted_violation(rr, c, i) { add_move(r, c, rr, c); }
                     }
                 }
                 // LEFT
@@ -541,7 +564,7 @@ impl GameState {
                     for cc in (0..c).rev() {
                         let dest = Self::idx(r, cc);
                         if (occupied & (1 << dest)) != 0 { break; } 
-                        if !self.is_restricted_violation(r, cc, i) { moves.push([r, c, r, cc]); }
+                        if !self.is_restricted_violation(r, cc, i) { add_move(r, c, r, cc); }
                     }
                 }
                 // RIGHT
@@ -549,7 +572,7 @@ impl GameState {
                     for cc in c+1..7 {
                         let dest = Self::idx(r, cc);
                         if (occupied & (1 << dest)) != 0 { break; } 
-                        if !self.is_restricted_violation(r, cc, i) { moves.push([r, c, r, cc]); }
+                        if !self.is_restricted_violation(r, cc, i) { add_move(r, c, r, cc); }
                     }
                 }
             }
@@ -568,6 +591,72 @@ impl GameState {
         if (self.king_piece & (1 << src_idx)) != 0 { return false; }
         
         true
+    }
+
+    /// Simulate what the boards would look like after a move (B, W, K).
+    /// Used for checking repetitions without mutating state.
+    fn predict_next_boards(&self, coords: &[usize; 4]) -> (u64, u64, u64) {
+        let (sr, sc, er, ec) = (coords[0], coords[1], coords[2], coords[3]);
+        let src_mask = 1 << Self::idx(sr, sc);
+        let dst_mask = 1 << Self::idx(er, ec);
+        let move_mask = src_mask | dst_mask;
+
+        let mut next_black = self.black_pieces;
+        let mut next_white = self.white_pieces;
+        let mut next_king = self.king_piece;
+
+        // 1. Move the piece
+        let mut p_idx = 0; // 0:B, 1:W, 2:K
+        if (self.black_pieces & src_mask) != 0 {
+            next_black ^= move_mask;
+            p_idx = 0;
+        } else if (self.white_pieces & src_mask) != 0 {
+            next_white ^= move_mask;
+            p_idx = 1;
+        } else if (self.king_piece & src_mask) != 0 {
+            next_king ^= move_mask;
+            p_idx = 2;
+        }
+
+        let mover_is_black = p_idx == 0;
+        let dst_idx = Self::idx(er, ec);
+
+        // 2. Apply Captures (Logic adapted from next_hash)
+        let neighbors = self.get_orthogonal_neighbors(dst_idx);
+        for &victim_idx in &neighbors {
+            let v_mask = 1 << victim_idx;
+            
+            // Check if neighbor is occupied in the SIMULATED board
+            let is_victim_black = (next_black & v_mask) != 0;
+            let is_victim_white = (next_white & v_mask) != 0;
+            let is_victim_king = (next_king & v_mask) != 0;
+
+            if !is_victim_black && !is_victim_white && !is_victim_king { continue; }
+
+            // Define Enemy based on Mover
+            let is_enemy = if mover_is_black { is_victim_white || is_victim_king } 
+                           else { is_victim_black };
+            if !is_enemy { continue; }
+
+            // King capture check
+            if is_victim_king {
+                if self.check_king_captured_sim(next_black, next_king) {
+                    next_king &= !v_mask; // Remove King
+                }
+                continue;
+            }
+
+            // Pawn capture check
+            if let Some(anvil_idx) = self.get_anvil_index(dst_idx, victim_idx) {
+                if self.is_hostile_sim(anvil_idx, is_victim_black, next_black, next_white, next_king) {
+                    // Remove victim
+                    if is_victim_black { next_black &= !v_mask; }
+                    else { next_white &= !v_mask; }
+                }
+            }
+        }
+
+        (next_black, next_white, next_king)
     }
 
     // ===============================

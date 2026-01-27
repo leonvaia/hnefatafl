@@ -238,7 +238,7 @@ impl TT_bucket {
             return true;
         }
 
-        // Overwrite.
+        // Overwrite the least visited entry within generation_range.
         self.overwrite(min_index, hash, generation, 0, 0);
         return false;
     }

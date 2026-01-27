@@ -101,7 +101,7 @@ impl MCTS {
 
         // === CHOOSE BEST MOVE: the most visited child ===
         let mut moves = Vec::with_capacity(MAX_MOVES);
-        root.get_legal_moves(&mut moves);
+        root.get_legal_moves(&mut moves, true);
         let mut moves_not_cached = 0;
 
         let mut max_visits = 0;
@@ -134,7 +134,6 @@ impl MCTS {
         
         writeln!(writer, "Number of child moves not cached: {}", moves_not_cached).expect("could not write to output");
         if let Some(mv) = best_move {
-            writeln!(writer, "Number of child moves not cached: {}", moves_not_cached).expect("could not write to output");
             return mv;
         }
 
@@ -216,7 +215,7 @@ impl MCTS {
         {
             // === COMPUTE UCB ===
             let mut moves = Vec::with_capacity(MAX_MOVES);
-            state.get_legal_moves(&mut moves);
+            state.get_legal_moves(&mut moves, true);
 
             let mut max_ucb_value = -1.0;
             let mut best_move: Option<[usize; 4]> = None;
@@ -341,11 +340,12 @@ impl MCTS {
             }
 
             // Available moves.
-            temp_state.get_legal_moves(&mut moves);
+            temp_state.get_legal_moves(&mut moves, true);
             if moves.is_empty() {
                 writeln!(writer, "Error: Simulation step has no moves but game over wasn't caught.").expect("could not write to output");
                 writeln!(writer, "Applying rule 9 anyways...\n").expect("could not write to output");
                 // Current player loses (Rule 9: If a player cannot move, he loses the game).
+                // (Combined with Rule 8: If white repeats a move, he loses.)
                 if state.player == temp_state.player { return LOSS; }
                 else { return WIN; }
             }
