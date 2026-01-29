@@ -727,20 +727,185 @@ impl GameState {
         attackers <= 2 && defenders <= 1
     }
 
-    // =================================
-    //            HEURISTICS
-    // =================================
+    // ======================================
+    //            HEURISTICS BLACK           
+    // ======================================
+
+    /// Returns true if Black can capture the King immediately.
+    pub fn heuristic_capture_king(&self) -> (bool, Option<[usize; 4]>) {
+        // Black must be the player moving.
+        if self.player != 'B' { return (false, None); }
+        
+        // Find King.
+        let k_idx = self.king_piece.trailing_zeros() as usize;
+        if k_idx >= 64 { return (false, None); } // Should not happen.
+
+        // Get neighbors.
+        let neighbors = self.get_orthogonal_neighbors(k_idx);
+        let occupied = self.black_pieces | self.white_pieces | self.king_piece;
+
+        // === CASE 1: King on Throne (24) ===
+        // Needs 4 attackers. We need 3 present + 1 reachable empty spot.
+        if k_idx == 24 {
+            let mut black_count = 0;
+            let mut empty_spot = None;
+
+            for &n in &neighbors {
+                if (self.black_pieces & (1 << n)) != 0 {
+                    black_count += 1;
+                } else if (occupied & (1 << n)) == 0 {
+                    empty_spot = Some(n);
+                }
+            }
+
+            if black_count == 3 {
+                if let Some(target) = empty_spot {
+                    if let Some(mv) = self.get_black_move_to(target) {
+                        return (true, Some(mv));
+                    }
+                }
+            }
+            return (false, None);
+        }
+
+        // === CASE 2: King Next to Throne (23, 25, 17, 31) ===
+        // Needs 3 attackers + Throne (which acts as the 4th anvil).
+        // We need 2 present (excluding throne) + 1 reachable empty spot.
+        let is_next_throne = k_idx == 23 || k_idx == 25 || k_idx == 17 || k_idx == 31;
+        if is_next_throne {
+            let mut black_count = 0;
+            let mut empty_spot = None;
+
+            for &n in &neighbors {
+                if n == 24 { continue; } // Skip Throne (it's the anvil, not an attacker)
+                
+                if (self.black_pieces & (1 << n)) != 0 {
+                    black_count += 1;
+                } else if (occupied & (1 << n)) == 0 {
+                    empty_spot = Some(n);
+                }
+            }
+
+            if black_count == 2 {
+                if let Some(target) = empty_spot {
+                    if let Some(mv) = self.get_black_move_to(target) {
+                        return (true, Some(mv));
+                    }
+                }
+            }
+            return (false, None);
+        }
+
+        // === CASE 3: Standard Capture (Sandwich) ===
+        // Check Horizontal Pair
+        let r = k_idx / 7;
+        let c = k_idx % 7;
+
+        // Check Horizontal (West/East)
+        if c > 0 && c < 6 {
+            let w = k_idx - 1;
+            let e = k_idx + 1;
+            // Check West as Killer, East as Anvil
+            if self.is_hostile_anvil_for_heuristic(e) && (occupied & (1 << w)) == 0 {
+                if let Some(mv) = self.get_black_move_to(w) { return (true, Some(mv)); }
+            }
+            // Check East as Killer, West as Anvil
+            if self.is_hostile_anvil_for_heuristic(w) && (occupied & (1 << e)) == 0 {
+                if let Some(mv) = self.get_black_move_to(e) { return (true, Some(mv)); }
+            }
+        }
+
+        // Check Vertical (North/South)
+        if r > 0 && r < 6 {
+            let n = k_idx - 7;
+            let s = k_idx + 7;
+            // Check North as Killer, South as Anvil
+            if self.is_hostile_anvil_for_heuristic(s) && (occupied & (1 << n)) == 0 {
+                if let Some(mv) = self.get_black_move_to(n) { return (true, Some(mv)); }
+            }
+            // Check South as Killer, North as Anvil
+            if self.is_hostile_anvil_for_heuristic(n) && (occupied & (1 << s)) == 0 {
+                if let Some(mv) = self.get_black_move_to(s) { return (true, Some(mv)); }
+            }
+        }
+
+        (false, None)
+    }
+
+    /// Helper: Checks if a square acts as an Anvil for Black (Black piece, Corner, or Throne).
+    #[inline]
+    fn is_hostile_anvil_for_heuristic(&self, idx: usize) -> bool {
+        let mask = 1 << idx;
+        if (self.black_pieces & mask) != 0 { return true; }
+        if (CORNERS & mask) != 0 { return true; }
+        if (THRONE & mask) != 0 { return true; } // Throne is hostile to King if empty (logic derived from game rules)
+        false
+    }
+
+    /// Helper: Checks if ANY Black piece can legally move to `target_idx`.
+    /// Returns the move [sr, sc, er, ec] if found.
+    fn get_black_move_to(&self, target_idx: usize) -> Option<[usize; 4]> {
+        // Black cannot capture by landing ON a restricted square (Throne/Corners).
+        if (RESTRICTED & (1 << target_idx)) != 0 { return None; }
+
+        let r = target_idx / 7;
+        let c = target_idx % 7;
+        let occupied = self.black_pieces | self.white_pieces | self.king_piece;
+
+        // Scan OUTWARDS from target to find a source piece.
+        // We stop at the first occupied square. If it's Black, we found a move.
+        // (Note: In your engine, pieces *can* slide through empty restricted squares, so we only break on occupied).
+
+        // UP
+        for rr in (0..r).rev() {
+            let curr = Self::idx(rr, c);
+            if (occupied & (1 << curr)) != 0 {
+                if (self.black_pieces & (1 << curr)) != 0 { return Some([rr, c, r, c]); }
+                break; // Blocked by White/King
+            }
+        }
+        // DOWN
+        for rr in r+1..7 {
+            let curr = Self::idx(rr, c);
+            if (occupied & (1 << curr)) != 0 {
+                if (self.black_pieces & (1 << curr)) != 0 { return Some([rr, c, r, c]); }
+                break;
+            }
+        }
+        // LEFT
+        for cc in (0..c).rev() {
+            let curr = Self::idx(r, cc);
+            if (occupied & (1 << curr)) != 0 {
+                if (self.black_pieces & (1 << curr)) != 0 { return Some([r, cc, r, c]); }
+                break;
+            }
+        }
+        // RIGHT
+        for cc in c+1..7 {
+            let curr = Self::idx(r, cc);
+            if (occupied & (1 << curr)) != 0 {
+                if (self.black_pieces & (1 << curr)) != 0 { return Some([r, cc, r, c]); }
+                break;
+            }
+        }
+        None
+    }
+
+    // =======================================
+    //            HEURISTICS WHITE            
+    // =======================================
 
     /// Returns true if from the current state white can win, whatever black does.
     pub fn heuristic_wins_w(&self) -> bool {
+        // White must be the player moving.
+        if self.player != 'W' { return false; }
+
         // 1. King to corner.
-        if self.heuristic_king_to_corner().0 {
-            return true;
-        }
+        if self.heuristic_king_to_corner().0 { return true; }
+
         // 2. King to empty edge.
-        if self.heuristic_king_empty_edge().0 {
-            return true;
-        }
+        if self.heuristic_king_empty_edge().0 { return true; }
+
         false
     }
 

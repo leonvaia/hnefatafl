@@ -94,6 +94,10 @@ impl MCTS {
             if let (true, Some(winning_move)) = root.heuristic_king_empty_edge() {
                  return winning_move;
              }
+        } else {
+            if let (true, Some(winning_move)) = root.heuristic_capture_king() {
+                return winning_move;
+            }
         }
 
         // Search game tree.
@@ -205,6 +209,11 @@ impl MCTS {
         // === HEURISTICS ===
         if state.heuristic_wins_w() {
             return if state.player == 'W' { WIN } else { LOSS };
+        }
+        if state.player == 'B' {
+            if state.heuristic_capture_king().0 {
+                return WIN;
+            }
         }
 
         // === SELECTION ===
@@ -337,6 +346,15 @@ impl MCTS {
                 if winner == 'T' { return DRAW; }
                 else if winner == state.player { return WIN; }
                 else { return LOSS; }
+            }
+            // Heuristics.
+            if state.heuristic_wins_w() {
+                return if state.player == 'W' { WIN } else { LOSS };
+            }
+            if state.player == 'B' {
+                if state.heuristic_capture_king().0 {
+                    return WIN;
+                }
             }
 
             // Available moves.
