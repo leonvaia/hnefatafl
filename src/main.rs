@@ -7,6 +7,7 @@ pub mod mcts;
 use std::fs::File;
 use std::{fs, io};
 use std::io::{BufWriter, Write};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use rand::prelude::IndexedRandom;
 use hnefatafl::GameState;
@@ -196,6 +197,48 @@ fn play_bot_games(game_count: usize, folder_name: &str) {
 
 use rayon::prelude::*; // Ensure this is at the top of your file
 
+fn play_bot_games_parallel(thread_count: usize, game_count: usize) {
+    println!("Starting {} parallel threads.", thread_count);
+    let folder_name = "equal_bots_parallel";
+    fs::create_dir_all(folder_name).expect("could not create folder");
+
+    let total_time = Instant::now();
+
+    let black_wins = Arc::new(Mutex::new(0));
+    let white_wins = Arc::new(Mutex::new(0));
+
+    // Use rayon to parallelize the trials
+    (0..thread_count).into_par_iter().for_each(|thread_id| {
+        let white_iterations = 200_000;
+        let black_iterations = 200_000;
+
+        for i in 0..game_count {
+            let white_seed = 0xCAFEBABE + (thread_id as u64 * 100);
+            let black_seed = 0xDEADBEEF + (thread_id as u64 * 100);
+            let mut engine_white = MCTS::new(white_seed, white_iterations);
+            let mut engine_black = MCTS::new(black_seed, black_iterations);
+
+            // Use your existing logic to play the game
+            for i in 0..game_count {
+                let run_id = thread_count * thread_id + i;
+                let file_name = format!("{}/{}", folder_name, run_id);
+                let result = play_bot_vs_bot(&mut engine_white, &mut engine_black, true, &file_name);
+                if result == 'B' {
+                    let mut help = black_wins.lock().unwrap();
+                    *help += 1;
+                } else {
+                    let mut help = white_wins.lock().unwrap();
+                    *help += 1;
+                }
+            }
+        }
+    });
+
+    println!("White won {} games", white_wins.lock().unwrap());
+    println!("Black won {} games", black_wins.lock().unwrap());
+    println!("Finished {} games using {} threads in {:.2}s", game_count * thread_count, thread_count, total_time.elapsed().as_secs_f64());
+}
+
 fn play_increasing_bot_games(thread_count: usize, folder_name: &str) {
     // Create the base directory
     fs::create_dir_all(folder_name).expect("could not create folder");
@@ -232,6 +275,9 @@ fn play_increasing_bot_games(thread_count: usize, folder_name: &str) {
                 break;
             } else {
                 // Increase difficulty for the next attempt in this thread
+                if attempt >= 4 {
+                    white_iterations += 2_000_000
+                }
                 white_iterations += 1_000_000;
             }
         }
@@ -292,6 +338,19 @@ fn main() {
         let thread_count: usize = input.trim().parse().expect("Invalid number");
 
         play_increasing_bot_games(thread_count, "parallel_white_increasing");
+    } else if input.trim() == "6" {
+        println!("How many parallel threads should be run?");
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+
+        println!("How many games should be played on each thread?");
+        let mut input2 = String::new();
+        io::stdin().read_line(&mut input2).unwrap();
+
+        let thread_count : usize = input.trim().parse().expect("amount of threads has to be given as a number");
+        let game_count : usize = input2.trim().parse().expect("amount of games has to be given as a number");
+        println!("Starting {} threads playing {} games of engine vs engine each", thread_count, game_count);
+        play_bot_games_parallel(thread_count, game_count);
     } else {
         let mut engine = MCTS::new(0xCAFEBABE, 200_000);
         play_game(&mut engine, mode, 'W', false, "");
