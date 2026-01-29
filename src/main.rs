@@ -77,7 +77,7 @@ fn play_game(engine: &mut MCTS, mode: GameMode, bot_side: char, to_file: bool, f
                     writeln!(buffered_writer, "Playing random move").expect("could not write to output");
                     let mut rng = rand::rng();
                     let mut moves = Vec::with_capacity(mcts::MAX_MOVES);
-                    game.get_legal_moves(&mut moves);
+                    game.get_legal_moves(&mut moves, false);
                     let random_move = moves.choose(&mut rng).unwrap();
                     game.move_piece(random_move, &engine.z_table, false, &mut buffered_writer);
                 }
@@ -194,6 +194,52 @@ fn play_bot_games(game_count: usize, folder_name: &str) {
     println!("Finished {} games in {:.2}s", game_count, total_time.elapsed().as_secs_f64());
 }
 
+use rayon::prelude::*; // Ensure this is at the top of your file
+
+fn play_increasing_bot_games(thread_count: usize, folder_name: &str) {
+    // Create the base directory
+    fs::create_dir_all(folder_name).expect("could not create folder");
+
+    println!("Starting {} parallel threads.", thread_count);
+    println!("White's iterations will increase by 1_000_000 every time it loses.");
+
+    let total_time = Instant::now();
+
+    // Use rayon to parallelize the trials
+    (0..thread_count).into_par_iter().for_each(|thread_id| {
+        let mut white_iterations = 1_000_000;
+        let black_iterations = 200_000;
+        let mut attempt = 0;
+
+        loop {
+            attempt += 1;
+            // Distinct seeds for each trial/attempt to ensure variety
+            let white_seed = 0xCAFEBABE + (thread_id as u64 * 100) + attempt;
+            let black_seed = 0xDEADBEEF + (thread_id as u64 * 100) + attempt;
+
+            let mut engine_white = MCTS::new(white_seed, white_iterations);
+            let mut engine_black = MCTS::new(black_seed, black_iterations);
+
+            // Create a unique filename for this specific attempt
+            let file_name = format!("{}/trial_{}_iters_{}.txt", folder_name, thread_id, white_iterations);
+
+            // Use your existing logic to play the game
+            let result = play_bot_vs_bot(&mut engine_white, &mut engine_black, true, &file_name);
+
+            if result == 'W' {
+                // We use a standard println! here; Rayon handles thread-safe stdout locking
+                println!("Trial {}: White WON with {} iterations (Attempt {})", thread_id, white_iterations, attempt);
+                break;
+            } else {
+                // Increase difficulty for the next attempt in this thread
+                white_iterations += 1_000_000;
+            }
+        }
+    });
+
+    println!("Finished all trials in {:.2}s", total_time.elapsed().as_secs_f64());
+}
+
 fn announce_result<W: Write>(result: char, writer: &mut W) -> io::Result<()> {
     match result {
         'W' => writeln!(writer, "White wins!")?,
@@ -239,6 +285,13 @@ fn main() {
         let game_count : usize = input.trim().parse().expect("amount of games has to be given as a number");
         println!("Starting {} games of engine vs engine", game_count);
         play_bot_games(game_count, "equal_bots");
+    } else if input.trim() == "5" {
+        println!("How many parallel threads should be run?");
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        let thread_count: usize = input.trim().parse().expect("Invalid number");
+
+        play_increasing_bot_games(thread_count, "parallel_white_increasing");
     } else {
         let mut engine = MCTS::new(0xCAFEBABE, 200_000);
         play_game(&mut engine, mode, 'W', false, "");
