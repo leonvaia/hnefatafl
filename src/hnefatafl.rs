@@ -1,4 +1,14 @@
-/// Game State and rules implementation.
+//! Game State and rules implementation.
+//! Game: Hnefatafl on 7x7 board with simplified Copenhagen rules:
+//! - No shieldwall rule (4b), no exit forts (6b), no surrounding (7b).
+//! - If the king is not at or next to the throne, he can be captured like any other piece,
+//!   with two enemies on the sides.
+//! - If the king is on the throne, he has to be surrounded on all four sides.
+//! - If the king is next to the throne, he has to be surrounded on the remaining three sides.
+//! - The corner fields are hostile to all, including the King.
+//! - The throne is always hostile to black and hostile to white if not occupied.
+//! - The repetition of a game state results in a loss for white (King side).
+
 /// The moves are encoded as an array: coords = [start_row, start_col, end_row, end_col]
 
 use std::io::{self, Write};

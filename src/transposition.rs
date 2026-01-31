@@ -13,16 +13,20 @@ const TT_DIM_MINUS_1: usize = TT_DIM - 1;
 /// ===================
 /// Bit layout:
 /// hash:       u40 = 64 bit - TT_DIM bit
-/// generation: u29 / u31 / u15
-/// n_visits:   u29 / u28 / u36
-/// n_wins:     i30 / i29 / u37
+/// generation: u15 / u13
+/// n_visits:   u36 / u37
+/// n_wins:     i37 / i38
 /// total:      128 bit = 16 byte
-/// Note: The third layout (currently used) makes sense when generation is updated
+/// Note: The above layouts make sense when generation is updated
 /// at each call of get_move() instead of at each call of start_search().
 const HASH_BITS: u32 = 40;
-const GEN_BITS: u32 = 15;
-const VISITS_BITS: u32 = 36;
-const WINS_BITS: u32 = 37;
+const GEN_BITS: u32 = 13;
+const VISITS_BITS: u32 = 37;
+const WINS_BITS: u32 = 38;
+/// To be sure the program doesn't get to an overflow, we force the following condition:
+/// 2^VISITS_BITS > 2^GEN_BITS * iterations_per_move
+const MAX_ITER_BITS: u32 = VISITS_BITS - GEN_BITS;
+pub const MAX_ITER: u32 = 1u32 << MAX_ITER_BITS; // used in mcts.rs
 /// Offsets.
 const HASH_OFFSET: u32 = 0;
 const GEN_OFFSET: u32 = HASH_OFFSET + HASH_BITS;
@@ -49,6 +53,18 @@ impl Default for TT_entry {
         // dangerous. For pointers it causes a CRASH.
         unsafe { mem::zeroed() }
     }
+}
+
+/// Values returned by add_entry do keep track of collisions.
+pub enum CollisionType {
+    // Entry was overwritten inside the range: BAD collision.
+    OverwrittenIN,
+    // Entry was overwritten outside the range.
+    OverwrittenOUT,
+    // Empty entry, no overwritten entry.
+    EmptyEntry,
+    // Entry already existed (no write performed).
+    Found,
 }
 
 impl TT_entry {
@@ -196,9 +212,7 @@ impl TT_bucket {
     /// If found, do nothing.
     /// If not found, add it with zero values; overwrite according to collision handling policy:
     /// overwrite the least visited entry among the entries outside the generation range.
-    /// Return true if a bad collision happen (i.e. all entries are inside generation range).
-    /// Return false otherwise.
-    pub fn add_entry(&mut self, hash: u64, generation: u32, generation_bound: u32) -> bool {
+    pub fn add_entry(&mut self, hash: u64, generation: u32, generation_bound: u32) -> Option<CollisionType> {
         let mut min_visits = usize::MAX;
         let mut min_index = usize::MAX;
 
@@ -206,7 +220,8 @@ impl TT_bucket {
         for (index, entry) in (&mut self.entries).into_iter().enumerate() {
             // if entry already exists.
             if !entry.is_empty() && entry.hash_equals(hash) {
-                return false;
+                entry.set_generation(generation);
+                return Some(CollisionType::Found);
             }
             // If empty entry.
             if entry.is_empty() {
@@ -214,7 +229,7 @@ impl TT_bucket {
                 entry.set_generation(generation);
                 entry.set_n_visits(0);
                 entry.set_n_wins(0);
-                return false;
+                return Some(CollisionType::EmptyEntry);
             }
             // If found entry outside the generation range.
             if entry.get_generation() < generation_bound
@@ -224,9 +239,9 @@ impl TT_bucket {
             }
         }
 
-        // If not found i.e. bucket is full.
+        // If not found i.e. bucket is full within range => BAD collision
         if min_visits == usize::MAX {
-            // Find least visited entry.
+            // Find least visited entry in range.
             for (index, entry) in (&mut self.entries).into_iter().enumerate() {
                 if entry.get_n_visits() < min_visits {
                     min_visits = entry.get_n_visits();
@@ -235,12 +250,12 @@ impl TT_bucket {
             }
             // Overwrite it.
             self.overwrite(min_index, hash, generation, 0, 0);
-            return true;
+            return Some(CollisionType::OverwrittenIN);
         }
 
-        // Overwrite the least visited entry within generation_range.
+        // Overwrite the least visited entry out of the generation_range (GOOD collision).
         self.overwrite(min_index, hash, generation, 0, 0);
-        return false;
+        return Some(CollisionType::OverwrittenOUT);
     }
 }
 

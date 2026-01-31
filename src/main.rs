@@ -20,8 +20,6 @@ enum GameMode {
     BotVsRandom,
 }
 
-const BOT_SIDE: char = 'W'; // or 'W'
-
 fn play_game(engine: &mut MCTS, mode: GameMode, bot_side: char, to_file: bool, file_name: &str) {
     let mut game = GameState::new(&engine.z_table);
 
@@ -92,11 +90,14 @@ fn play_game(engine: &mut MCTS, mode: GameMode, bot_side: char, to_file: bool, f
     buffered_writer.flush().expect("Flush failed");
 }
 
-fn play_games(mode: GameMode, bot_side: char, game_count: usize, folder_name: &str) {
-    fs::create_dir(folder_name).expect("could not create folder");
+fn play_games(mode: GameMode, bot_side: char, game_count: usize, folder_name: &str, generation: usize) {
+    fs::create_dir_all(folder_name).expect("could not create folder");
+
+    let generation_u32 = generation as u32;
     let time = Instant::now();
+    
     for i in 0..game_count {
-        let mut engine = MCTS::new(0xCAFEBABE, 200_000);
+        let mut engine = MCTS::new(0xCAFEBABE, 200_000, generation_u32);
         let file_name = format!("{}/{}.txt", folder_name, i);
         play_game(&mut engine, mode, bot_side,true, &file_name);
     }
@@ -116,7 +117,7 @@ fn play_bot_vs_bot(white_engine: &mut MCTS, black_engine: &mut MCTS, to_file: bo
     let mut buffered_writer = BufWriter::new(writer);
     let time = Instant::now();
     let mut moves_count = 0;
-    let mut winner = ' ';
+    let winner;
     loop {
         game.display(&mut buffered_writer).expect("Output failed");
         buffered_writer.flush().expect("Flush failed");
@@ -156,8 +157,8 @@ fn play_bot_games(game_count: usize, folder_name: &str) {
     println!("{} games will be played with both sides having 200_000 iterations per move", game_count);
     let total_time = Instant::now();
     for i in 0..game_count {
-        let mut engine_white = MCTS::new(0xCAFEBABE, 200_000);
-        let mut engine_black = MCTS::new(0xDEADBEEF, 200_000);
+        let mut engine_white = MCTS::new(0xCAFEBABE, 200_000, 16);
+        let mut engine_black = MCTS::new(0xDEADBEEF, 200_000, 16);
 
         let file_name = format!("{}/{}.txt", folder_name, i);
 
@@ -182,8 +183,8 @@ fn play_bot_games(game_count: usize, folder_name: &str) {
 
     let total_time = Instant::now();
     for i in 0..game_count {
-        let mut engine_white = MCTS::new(0xCAFEBABE, white_iterations);
-        let mut engine_black = MCTS::new(0xDEADBEEF, black_iterations);
+        let mut engine_white = MCTS::new(0xCAFEBABE, white_iterations, 16);
+        let mut engine_black = MCTS::new(0xDEADBEEF, black_iterations, 16);
 
         let file_name = format!("{}/{}.txt", &new_folder_name, i);
 
@@ -212,11 +213,11 @@ fn play_bot_games_parallel(thread_count: usize, game_count: usize) {
         let white_iterations = 200_000;
         let black_iterations = 200_000;
 
-        for i in 0..game_count {
+        for _ in 0..game_count {
             let white_seed = 0xCAFEBABE + (thread_id as u64 * 100);
             let black_seed = 0xDEADBEEF + (thread_id as u64 * 100);
-            let mut engine_white = MCTS::new(white_seed, white_iterations);
-            let mut engine_black = MCTS::new(black_seed, black_iterations);
+            let mut engine_white = MCTS::new(white_seed, white_iterations, 16);
+            let mut engine_black = MCTS::new(black_seed, black_iterations, 16);
 
             // Use your existing logic to play the game
             for i in 0..game_count {
@@ -260,8 +261,8 @@ fn play_increasing_bot_games(thread_count: usize, folder_name: &str) {
             let white_seed = 0xCAFEBABE + (thread_id as u64 * 100) + attempt;
             let black_seed = 0xDEADBEEF + (thread_id as u64 * 100) + attempt;
 
-            let mut engine_white = MCTS::new(white_seed, white_iterations);
-            let mut engine_black = MCTS::new(black_seed, black_iterations);
+            let mut engine_white = MCTS::new(white_seed, white_iterations, 16);
+            let mut engine_black = MCTS::new(black_seed, black_iterations, 16);
 
             // Create a unique filename for this specific attempt
             let file_name = format!("{}/trial_{}_iters_{}.txt", folder_name, thread_id, white_iterations);
@@ -301,9 +302,15 @@ fn main() {
 
     println!("Welcome to Hnefatafl!\n");
     println!("Enter positions in the following format:");
-    println!("start_row start_col end_row end_col");
+    println!("start_row start_col end_row end_col\n");
 
-    println!("For games between two humans type 2");
+    println!("type:");
+    println!("2 -> human vs human");
+    println!("3 -> bot vs random");
+    println!("4 -> bot vs bot");
+    println!("5 -> bot vs bot (increasing iterations)");
+    println!("6 -> bot vs bot (threads)");
+    println!("7 -> bot vs random (increasing generation range)");
     let mut input = String::new();
     io::stdin().read_line(&mut input).unwrap();
 
@@ -320,9 +327,9 @@ fn main() {
 
         let game_count : usize = input.trim().parse().expect("amount of games has to be given as a number");
         println!("Starting {} games of random vs engine on white", game_count);
-        play_games(mode, 'W', game_count, "random_vs_engine_on_white");
+        play_games(mode, 'W', game_count, "random_vs_engine_on_white", 16);
         println!("Starting {} games of random vs engine on black", game_count);
-        play_games(mode, 'B', game_count, "random_vs_engine_on_black");
+        play_games(mode, 'B', game_count, "random_vs_engine_on_black", 16);
     } else if input.trim() == "4" {
         println!("How many games should be played?");
         let mut input = String::new();
@@ -351,9 +358,22 @@ fn main() {
         let game_count : usize = input2.trim().parse().expect("amount of games has to be given as a number");
         println!("Starting {} threads playing {} games of engine vs engine each", thread_count, game_count);
         play_bot_games_parallel(thread_count, game_count);
+    } else if input.trim() == "7" {
+        println!("How many games should be played?");
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        let game_count : usize = input.trim().parse().expect("amount of games has to be given as a number");
+
+        for generation in [1, 2, 4, 8, 16, 32] {
+            println!("Starting {} games of random vs engine on white", game_count);
+            let folder_name = format!("{}/{}", generation, "random_vs_engine_on_white");
+            play_games(GameMode::BotVsRandom, 'W', game_count, &folder_name, generation);
+            println!("Starting {} games of random vs engine on black", game_count);
+            let folder_name = format!("{}/{}", generation, "random_vs_engine_on_black");
+            play_games(GameMode::BotVsRandom, 'B', game_count, &folder_name, generation);
+        }
     } else {
-        let mut engine = MCTS::new(0xCAFEBABE, 200_000);
+        let mut engine = MCTS::new(0xCAFEBABE, 200_000, 16);
         play_game(&mut engine, mode, 'W', false, "");
     }
 }
-

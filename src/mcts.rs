@@ -1,14 +1,12 @@
 //! MCTS algorithm.
 
-//! IMPORTANT: To be sure the program doesn't get to an overflow, make sure the
-//! following condition is true:
-//! 2^VISITS_BITS > 2^GEN_BITS * iterations_per_move
-
 use std::io::Write;
 use rand::prelude::*;
 
 use crate::zobrist::Zobrist;
 use crate::transposition::TT;
+use crate::transposition::MAX_ITER;
+use crate::transposition::CollisionType;
 use crate::hnefatafl::GameState;
 
 /// Negamax values.
@@ -29,46 +27,65 @@ pub struct MCTS {
     
     // Used to age out old TT entries.
     generation: u32,
-    generation_range: u32,
+    pub generation_range: u32,
     generation_bound: u32, // = generation - generation_range
 
     // Heavy data structures.
     transpositions: TT,
     pub z_table: Zobrist,
 
-    // Evaluation.
-    collisions: usize,
+    // Evaluation of transposition table.
+    written_entries: usize,
+    overwritten_entries_in: usize,
+    overwritten_entries_out: usize,
 }
 
 impl MCTS {
-    pub fn new(seed: u64, iterations: u32) -> Self {
+    pub fn new(seed: u64, iterations_per_move: u32, generation_range: u32) -> Self {
+        // To prevent overflow check: 2^VISITS_BITS > 2^GEN_BITS * iterations_per_move
+        if iterations_per_move >= MAX_ITER {
+            panic!("Number of iteration passed might cause an overflow.");
+        }
+
         Self {
-            // To prevent overflow check: 2^VISITS_BITS > 2^GEN_BITS * iterations_per_move
-            iterations_per_move: iterations,
+            iterations_per_move,
             ucb_const: 1.414,
             generation: 0,
-            generation_range: 20,
+            generation_range,
             generation_bound: 0,
             transpositions: TT::new(),
             z_table: Zobrist::new(seed),
-            collisions: 0,
+            written_entries: 0,
+            overwritten_entries_in: 0,
+            overwritten_entries_out: 0,
         }
     }
 
+    /// Helpers for transposition collision handling.
     #[inline]
     fn increase_generation(&mut self) {
         self.generation += 1;
-        if self.generation > self.generation_range { // = generation - generation_range
-            self.generation_bound += 1;
+        if self.generation > self.generation_range {
+            self.generation_bound += 1; // = generation - generation_range
         }
         if self.generation >= MAX_GEN {
             panic!("Reached maximum generation. To go further you will need to change the bit layout");
         }
-    }
 
+        // Reset partial counts of collisions.
+        self.written_entries = 0;
+        self.overwritten_entries_in = 0;
+        self.overwritten_entries_out = 0;
+    }
     #[inline]
-    fn increase_collisions(&mut self) {
-        self.collisions += 1;
+    fn increase_collision_in(&mut self) {
+        self.written_entries += 1;
+        self.overwritten_entries_in += 1;
+    }
+    #[inline]
+    fn increase_collision_out(&mut self) {
+        self.written_entries += 1;
+        self.overwritten_entries_out += 1;
     }
 }
 
@@ -109,6 +126,7 @@ impl MCTS {
         let mut moves_not_cached = 0;
 
         let mut max_visits = 0;
+        let mut max_wins = 0;
         let mut best_move: Option<[usize; 4]> = None;
 
         // Consider only moves that do NOT result in a loss for current player.
@@ -123,11 +141,13 @@ impl MCTS {
                         if !(root.player != winner) {
                             // Game is over and it is NOT a loss for current player. consider the move.
                             max_visits = entry.get_n_visits();
+                            max_wins = entry.get_n_wins();
                             best_move = Some(m.clone());
                         }
                     } else {
                         // Game isn't over, consider the move.
                         max_visits = entry.get_n_visits();
+                        max_wins = entry.get_n_wins();
                         best_move = Some(m.clone());
                     }
                 }
@@ -137,7 +157,11 @@ impl MCTS {
         }
         
         writeln!(writer, "Number of child moves not cached: {}", moves_not_cached).expect("could not write to output");
+
+        // If found a move, return it and print relative information.
         if let Some(mv) = best_move {
+            writeln!(writer, "child wins: {}", max_wins).expect("could not write to output");
+            writeln!(writer, "child visits: {}", max_visits).expect("could not write to output");
             return mv;
         }
 
@@ -159,38 +183,51 @@ impl MCTS {
         {
             let bucket = self.transpositions.get_bucket(root.hash);
             if let Some(root_entry) = bucket.get_entry(root.hash) {
-                root_visits = root_entry.get_n_visits();
+                root_visits = root_entry.get_n_visits(); // Read value from cache.
                 root_wins = root_entry.get_n_wins();
             }
         }
         if root_visits < 1 { root_visits = 1; }
 
-        // Search game tree.
+        // SEARCH GAME TREE: SELECTION
         for _ in 1..self.iterations_per_move {
             // Selection and Backpropagation to the root.
-            root_wins += self.selection(root, root_visits, writer);
+            root_wins += self.selection(root, root_visits, writer); // Increment value.
             root_visits += 1;
         }
 
-        // Store the root in the transposition table.
-        let mut increase_collisions = false;
+        // BACKPROPAGATION to root.
+        let mut increase_collision_in = false;
+        let mut increase_collision_out = false;
+        let mut is_new_write = false;
         {
+            // Add.
             let bucket = self.transpositions.get_bucket(root.hash);
-            if bucket.add_entry(root.hash, self.generation, self.generation_bound) {
-                increase_collisions = true;
+            match bucket.add_entry(root.hash, self.generation, self.generation_bound) {
+                Some(CollisionType::OverwrittenIN) => { increase_collision_in = true; }
+                Some(CollisionType::OverwrittenOUT) => { increase_collision_out = true; }
+                Some(CollisionType::EmptyEntry) => { is_new_write = true; }
+                _ => {}
             }
+            // Write values.
             if let Some(root_entry) = bucket.get_entry(root.hash) {
-                root_entry.set_n_visits(root_visits);
+                root_entry.set_n_visits(root_visits); // Update value.
                 root_entry.set_n_wins(root_wins);
             } else {
                 writeln!(writer, "Error: root not added to transpositions table.").expect("could not write to output");
             }
         }
-        if increase_collisions { self.increase_collisions(); }
+        if increase_collision_in { self.increase_collision_in(); }
+        else if increase_collision_out { self.increase_collision_out(); }
+        else if is_new_write { self.written_entries += 1; }
 
         // The following might be useful to evaluate how the algorithm is performing in the current game.
-        writeln!(writer, "Exploration finished with {} wins for the current player.", root_wins).expect("could not write to output");
-        writeln!(writer, "Number of total collisions {}", self.collisions).expect("could not write to output");
+        writeln!(writer, "Number of written entries {}", self.written_entries).expect("could not write to output");
+        writeln!(writer, "Number of bad collisions {}", self.overwritten_entries_in).expect("could not write to output");
+        writeln!(writer, "Number of good collisions {}\n", self.overwritten_entries_out).expect("could not write to output");
+
+        writeln!(writer, "parent wins: {}", root_wins).expect("could not write to output");
+        writeln!(writer, "parent visits: {}", root_visits).expect("could not write to output");
     }
 
     /// ========================
@@ -298,12 +335,22 @@ impl MCTS {
 
         if is_expansion_phase {
             // === EXPANSION ===
+            let mut increase_collision_in = false;
+            let mut increase_collision_out = false;
+            let mut is_new_write = false;
             {
+                // Add.
                 let bucket = self.transpositions.get_bucket(selected_hash);
-                if bucket.add_entry(selected_hash, self.generation, self.generation_bound) {
-                    self.increase_collisions();
+                match bucket.add_entry(selected_hash, self.generation, self.generation_bound) {
+                    Some(CollisionType::OverwrittenIN) => { increase_collision_in = true; }
+                    Some(CollisionType::OverwrittenOUT) => { increase_collision_out = true; }
+                    Some(CollisionType::EmptyEntry) => { is_new_write = true; }
+                    _ => {}
                 }
             }
+            if increase_collision_in { self.increase_collision_in(); }
+            else if increase_collision_out { self.increase_collision_out(); }
+            else if is_new_write { self.written_entries += 1; }
 
             // === SIMULATION ===
             result_for_child_node = self.simulation(&next_state, writer);
