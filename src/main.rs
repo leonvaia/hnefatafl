@@ -311,6 +311,7 @@ fn main() {
     println!("5 -> bot vs bot (increasing iterations)");
     println!("6 -> bot vs bot (threads)");
     println!("7 -> bot vs random (increasing generation range)");
+    println!("8 -> bot vs bot (increasing generation range)");
     let mut input = String::new();
     io::stdin().read_line(&mut input).unwrap();
 
@@ -371,6 +372,56 @@ fn main() {
             println!("Starting {} games of random vs engine on black", game_count);
             let folder_name = format!("{}/{}", generation, "random_vs_engine_on_black");
             play_games(GameMode::BotVsRandom, 'B', game_count, &folder_name, generation);
+        }
+    } else if input.trim() == "8" {
+        println!("How many games should be played per generation setting?");
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        let game_count : usize = input.trim().parse().expect("amount of games has to be given as a number");
+
+        // Sequential loop over generations to compare performance
+        for generation in [1, 2, 4, 8, 16, 32] {
+            println!("Starting {} games of engine vs engine with generation range {}", game_count, generation);
+            let folder_name = format!("engine_vs_engine_gen_{}", generation);
+            fs::create_dir_all(&folder_name).expect("could not create folder");
+
+            // Thread-safe counters
+            let white_wins = Arc::new(Mutex::new(0));
+            let black_wins = Arc::new(Mutex::new(0));
+
+            let time = Instant::now();
+
+            // Parallel loop over the number of games
+            (0..game_count).into_par_iter().for_each(|i| {
+                let generation_u32 = generation as u32;
+
+                // Create unique seeds for each game to ensure they are not identical
+                // (MCTS uses random playouts, but distinct seeds are safer)
+                let white_seed = 0xCAFEBABE + (i as u64 * 128);
+                let black_seed = 0xDEADBEEF + (i as u64 * 128);
+
+                // Initialize thread-local engines
+                let mut engine_white = MCTS::new(white_seed, 400_000, generation_u32);
+                let mut engine_black = MCTS::new(black_seed, 400_000, generation_u32);
+
+                let file_name = format!("{}/{}.txt", folder_name, i);
+                
+                // Play game (output goes to file, so no stdout race conditions)
+                let result = play_bot_vs_bot(&mut engine_white, &mut engine_black, true, &file_name);
+                
+                // Update shared win counters safely
+                if result == 'B' { 
+                    let mut b_lock = black_wins.lock().unwrap();
+                    *b_lock += 1;
+                } else if result == 'W' { 
+                    let mut w_lock = white_wins.lock().unwrap();
+                    *w_lock += 1;
+                }
+            });
+            
+            let elapsed_time = Instant::now() - time;
+            println!("Finished generation {} in {:.2}s", generation, elapsed_time.as_secs_f64());
+            println!("White wins: {}, Black wins: {}", *white_wins.lock().unwrap(), *black_wins.lock().unwrap());
         }
     } else {
         let mut engine = MCTS::new(0xCAFEBABE, 200_000, 16);
