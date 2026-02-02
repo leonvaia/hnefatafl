@@ -22,7 +22,7 @@ const TT_DIM_MINUS_1: usize = TT_DIM - 1;
 const HASH_BITS: u32 = 40;
 const GEN_BITS: u32 = 13;
 const VISITS_BITS: u32 = 37;
-const WINS_BITS: u32 = 38;
+pub const WINS_BITS: u32 = 38;
 /// To be sure the program doesn't get to an overflow, we force the following condition:
 /// 2^VISITS_BITS > 2^GEN_BITS * iterations_per_move
 const MAX_ITER_BITS: u32 = VISITS_BITS - GEN_BITS;

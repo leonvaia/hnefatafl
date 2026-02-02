@@ -6,13 +6,16 @@ use rand::prelude::*;
 use crate::zobrist::Zobrist;
 use crate::transposition::TT;
 use crate::transposition::MAX_ITER;
+use crate::transposition::WINS_BITS;
 use crate::transposition::CollisionType;
 use crate::hnefatafl::GameState;
 
 /// Negamax values.
 const WIN: isize = 1;
-const LOSS: isize = 0;
-const DRAW: isize = -1;
+const LOSS: isize = -1;
+const DRAW: isize = 0;
+/// Threshold to consider a node "Solved" in the TT.
+const SOLVED_THRESHOLD: usize = 1 << (WINS_BITS - 2);
 
 /// Maximum number of generations (to prevent data corruption) according to current bit layout.
 const MAX_GEN: u32 = 1 << 15; // = 2^GEN_BITS
@@ -87,6 +90,41 @@ impl MCTS {
         self.written_entries += 1;
         self.overwritten_entries_out += 1;
     }
+
+    /// Mark a node as terminal (SOLVED) in the Transposition Table.
+    /// This prevents re-searching a known Win/Loss/Draw.
+    /// score is usually 1, 0, or -1.
+    fn mark_terminal(&mut self, hash: u64, score: isize) {
+        let bucket = self.transpositions.get_bucket(hash);
+
+        // Ensure the entry exists.
+        let mut increase_collision_in = false;
+        let mut increase_collision_out = false;
+        let mut is_new_write = false;
+        match bucket.add_entry(hash, self.generation, self.generation_bound) {
+            Some(CollisionType::OverwrittenIN) => { increase_collision_in = true; }
+            Some(CollisionType::OverwrittenOUT) => { increase_collision_out = true; }
+            Some(CollisionType::EmptyEntry) => { is_new_write = true; }
+            _ => {}
+        }
+        if increase_collision_in { self.increase_collision_in(); }
+        else if increase_collision_out { self.increase_collision_out(); }
+        else if is_new_write { self.written_entries += 1; }
+
+        // Set the values to SOLVED.
+        let bucket = self.transpositions.get_bucket(hash);
+        if let Some(entry) = bucket.get_entry(hash) {
+            entry.set_generation(self.generation);
+            
+            // We set visits to the threshold. 
+            // In UCB, a huge visit count makes the exploration term near zero, 
+            // effectively "pinning" the node value.
+            entry.set_n_visits(SOLVED_THRESHOLD);
+
+            // We scale the wins to match the ratio of the score.
+            entry.set_n_wins(score * (SOLVED_THRESHOLD as isize));
+        }
+    }
 }
 
 /// ======================
@@ -120,57 +158,92 @@ impl MCTS {
         // Search game tree.
         self.start_search(root, writer);
 
-        // === CHOOSE BEST MOVE: the most visited child ===
+        // === CHOOSE BEST MOVE: the most visited child, considering solved childs ===
         let mut moves = Vec::with_capacity(MAX_MOVES);
         root.get_legal_moves(&mut moves, true);
+        
         let mut moves_not_cached = 0;
 
-        let mut max_visits = 0;
-        let mut max_wins = 0;
         let mut best_move: Option<[usize; 4]> = None;
+        let mut best_metric = -1.0; // We will use a mixed metric
+        let mut best_wins = 0;
+        let mut forced_loss_move: Option<[usize; 4]> = None; // Fallback if everything is lost
+        
+        let mut proven_losses = 0;
 
         // Consider only moves that do NOT result in a loss for current player.
         for m in &moves {
             let child_hash = root.next_hash(m, &self.z_table);
             let child_bucket = self.transpositions.get_bucket(child_hash);
+
+            let mut visits = 0;
+            let mut raw_wins = 0;
+            let mut score = 0.5;
+            let mut is_solved = false;
+
             if let Some(entry) = child_bucket.get_entry(child_hash) {
-                if entry.get_n_visits() > max_visits {
-                    let mut next_state = root.clone();
-                    next_state.move_piece(m, &self.z_table, false, writer);
-                    if let Some(winner) = next_state.check_game_over() {
-                        if !(root.player != winner) {
-                            // Game is over and it is NOT a loss for current player. consider the move.
-                            max_visits = entry.get_n_visits();
-                            max_wins = entry.get_n_wins();
-                            best_move = Some(m.clone());
-                        }
-                    } else {
-                        // Game isn't over, consider the move.
-                        max_visits = entry.get_n_visits();
-                        max_wins = entry.get_n_wins();
-                        best_move = Some(m.clone());
-                    }
+                visits = entry.get_n_visits();
+                raw_wins = entry.get_n_wins();
+
+                // Check if solved.
+                if visits >= SOLVED_THRESHOLD {
+                    is_solved = true;
+                    // Normalize score: 1.0 (Opponent Win), 0.0 (Opponent Loss), -1.0 (Draw)
+                    // Note: raw_wins for SOLVED is scaled by threshold.
+                    if raw_wins > 0 { score = 1.0; }      // Opponent Wins (BAD for us)
+                    else if raw_wins == 0 { score = 0.0; } // Opponent Loses (GOOD for us)
+                    else { score = -0.5; }                 // Draw
                 }
             } else {
                 moves_not_cached += 1;
             }
+
+            // CHOICE: 3 cases.
+
+            if is_solved {
+                if score == 0.0 {
+                    // Case 1: proven win (opponent loses).
+                    writeln!(writer, "Found PROVEN WIN move!").ok();
+                    return m.clone();
+                } else if score == 1.0 {
+                    // Case 2: proven loss (opponent wins).
+                    proven_losses += 1;
+                    forced_loss_move = Some(m.clone()); // Keep one as a fallback.
+                    continue;
+                }
+            }
+
+            // Case 3: standard choice (most visited child).
+            if (visits as f64) > best_metric {
+                best_metric = visits as f64;
+                best_wins = raw_wins;
+                best_move = Some(m.clone());
+            }
         }
         
         writeln!(writer, "Number of child moves not cached: {}", moves_not_cached).expect("could not write to output");
+        writeln!(writer, "Proven Losses avoided: {}", proven_losses).ok();
 
-        // If found a move, return it and print relative information.
+        // Return Best Move.
         if let Some(mv) = best_move {
-            writeln!(writer, "child wins: {}", max_wins).expect("could not write to output");
-            writeln!(writer, "child visits: {}", max_visits).expect("could not write to output");
+            writeln!(writer, "child wins: {}", best_wins).expect("could not write to output");
+            writeln!(writer, "child visits: {}\n", best_metric).expect("could not write to output");
             return mv;
         }
 
-        // If all moves bring to a loss for current player, return a random one.
-        writeln!(writer, "All possible moves bring to game over.").expect("could not write to output");
-        writeln!(writer, "Returning random move.").expect("could not write to file");
+        // Survival Mode.
+        // If we are here, it means EITHER:
+        // a) We didn't explore anything (bug?)
+        // b) ALL moves are "Proven Losses" (We are checkmated).
+        if let Some(loss_mv) = forced_loss_move {
+            writeln!(writer, "Resigning... (All moves lead to proven loss)").ok();
+            return loss_mv;
+        }
+
+        // Failsafe (Random).
+        writeln!(writer, "Warning: No evaluated moves found. Returning random.").ok();
         let mut rng = rand::rng();
-        let random_move = moves.choose(&mut rng).unwrap(); // returns a reference
-        return *random_move;        
+        *moves.choose(&mut rng).unwrap()
     }
 
     fn start_search<W: Write>(&mut self, root: &GameState, writer: &mut W) {
@@ -222,7 +295,7 @@ impl MCTS {
         else if is_new_write { self.written_entries += 1; }
 
         // The following might be useful to evaluate how the algorithm is performing in the current game.
-        writeln!(writer, "Number of written entries {}", self.written_entries).expect("could not write to output");
+        writeln!(writer, "\nNumber of written entries {}", self.written_entries).expect("could not write to output");
         writeln!(writer, "Number of bad collisions {}", self.overwritten_entries_in).expect("could not write to output");
         writeln!(writer, "Number of good collisions {}\n", self.overwritten_entries_out).expect("could not write to output");
 
@@ -235,22 +308,60 @@ impl MCTS {
     /// ========================
     /// Returns the result with the perspective of state.player
     fn selection<W: Write>(&mut self, state: &GameState, node_visits: usize, writer: &mut W) -> isize {
-        // === TERMINAL CHECKS ===
-        match state.check_game_over() {
-            Some('D') => return DRAW,
-            Some(winner) if winner == state.player => return WIN,
-            Some(_) => return LOSS,
-            None => {},
+        // === CHECK IF STATE IS ALREADY SOLVED IN TT ===
+        // If we found this state in the TT with high visit count,
+        // it means we already determined it is terminal in a previous path/search.
+        {
+            let bucket = self.transpositions.get_bucket(state.hash);
+            if let Some(entry) = bucket.get_entry(state.hash) {
+                if entry.get_n_visits() >= SOLVED_THRESHOLD {
+                    // Extract result (Mean Value).
+                    // We can just divide wins by visits, or use integer division.
+                    // Since visits is huge, the ratio is stable.
+                    let score = if entry.get_n_wins() > 0 { WIN }
+                                else if entry.get_n_wins() < 0 { LOSS }
+                                else { DRAW };
+                    return score;
+                }
+            }
+        }
+        
+        // === TERMINAL & HEURISTICS CHECKS ===
+        let mut terminal_score = None;
+
+        // Game over.
+        if let Some(winner) = state.check_game_over() {
+            let score = match winner {
+                'D' => DRAW,
+                w if w == state.player => WIN,
+                _ => LOSS,
+            };
+
+            // IMPORTANT: If loss is due to Repetition, it is context-dependent (history).
+            // We should NOT cache it as "globally terminal" in the TT (which uses context-free hash).
+            if !state.repetition {
+                terminal_score = Some(score);
+            } else {
+                return score; // Return result, but do not mark TT as Solved.
+            }
         }
 
-        // === HEURISTICS ===
+        // Heuristics for White.
         if state.heuristic_wins_w() {
-            return if state.player == 'W' { WIN } else { LOSS };
+            terminal_score = Some(if state.player == 'W' { WIN } else { LOSS });
         }
+
+        // Heuristics for Black.
         if state.player == 'B' {
             if state.heuristic_capture_king().0 {
-                return WIN;
+                terminal_score = Some(WIN);
             }
+        }
+
+        // If found a terminal state, mark it and return.
+        if let Some(score) = terminal_score {
+            self.mark_terminal(state.hash, score);
+            return score;
         }
 
         // === SELECTION ===
@@ -370,6 +481,34 @@ impl MCTS {
             } else {
                 writeln!(writer, "Error: Entry wasn't found during backpropagation.").expect("could not write to output");
                 writeln!(writer, "This means there is a problem with the overwriting policy.").expect("could not write to output");
+            }
+        }
+
+        // === SOLVER PROPAGATION ===
+        // Check if the child we just explored (in the recursive selection) is now SOLVED.
+        let child_bucket = self.transpositions.get_bucket(selected_hash);
+        
+        if let Some(e) = child_bucket.get_entry(selected_hash) {
+            let child_visits = e.get_n_visits();
+            let child_wins = e.get_n_wins();
+
+            // Check if child is solved.
+            if child_visits >= SOLVED_THRESHOLD {
+                // Case 1: Child is a PROVEN LOSS for the opponent (score == 0).
+                // If the opponent loses in that state, it means we WIN by making this move.
+                // We assume 0 represents LOSS based on your const definitions.
+                if child_wins < 0 {
+                    self.mark_terminal(state.hash, WIN);
+                    // Since we found a winning move, we return WIN immediately.
+                    return WIN; 
+                }
+
+                // Case 2: Child is a PROVEN WIN for the opponent.
+                // This means 'selected_move' is a blunder.
+                // WE DO NOT MARK THE PARENT AS A LOSS HERE. 
+                // We would have to check ALL siblings to prove the parent is a loss.
+                // However, the UCB formula will naturally avoid this move in future 
+                // iterations because its value will be poor.
             }
         }
 
