@@ -44,7 +44,7 @@ pub struct MCTS {
 }
 
 impl MCTS {
-    pub fn new(seed: u64, iterations_per_move: u32, generation_range: u32) -> Self {
+    pub fn new(seed: u64, iterations_per_move: u32, ) -> Self {
         // To prevent overflow check: 2^VISITS_BITS > 2^GEN_BITS * iterations_per_move
         if iterations_per_move >= MAX_ITER {
             panic!("Number of iteration passed might cause an overflow.");
@@ -54,7 +54,7 @@ impl MCTS {
             iterations_per_move,
             ucb_const: 1.414,
             generation: 0,
-            generation_range,
+            generation_range: 1,
             generation_bound: 0,
             transpositions: TT::new(),
             z_table: Zobrist::new(seed),
