@@ -477,6 +477,28 @@ impl GameState {
         let my_pieces = if player == 'B' { self.black_pieces } 
                         else { self.white_pieces | self.king_piece };
 
+        // We only check repetition if the player is White (Rule 8).
+        let check_repetition = player == 'W';
+        let history_slice = &self.history[0..self.history_len];
+
+        // Closure to check if a specific move is valid regarding repetition
+        let is_safe_move = |r, c, er, ec| -> bool {
+            if !check_repetition { return true; }
+
+            let coords = [r, c, er, ec];
+            let (nb, nw, nk) = self.predict_next_boards(&coords);
+            let target_key = (nb, nw, nk);
+
+            // Binary search in history to see if this state existed before
+            let found = history_slice.binary_search_by(|entry| {
+                entry.0.cmp(&target_key.0)
+                    .then(entry.1.cmp(&target_key.1))
+                    .then(entry.2.cmp(&target_key.2))
+            }).is_ok();
+
+            !found // Valid if NOT found
+        };
+
         for i in 0..TOTAL_SQUARES {
             // If I have a piece at i
             if (my_pieces & (1 << i)) != 0 {
@@ -488,25 +510,34 @@ impl GameState {
                 for rr in (0..r).rev() {
                     let dest = Self::idx(rr, c);
                     if (occupied & (1 << dest)) != 0 { break; } // Blocked
-                    if !self.is_restricted_violation(rr, c, i) { return true; }
+                    if !self.is_restricted_violation(rr, c, i) { 
+                        // Found a physically valid move. Now check history.
+                        if is_safe_move(r, c, rr, c) { return true; }
+                    }
                 }
                 // DOWN
                 for rr in r+1..7 {
                     let dest = Self::idx(rr, c);
                     if (occupied & (1 << dest)) != 0 { break; }
-                    if !self.is_restricted_violation(rr, c, i) { return true; }
+                    if !self.is_restricted_violation(rr, c, i) { 
+                        if is_safe_move(r, c, rr, c) { return true; }
+                    }
                 }
                 // LEFT
                 for cc in (0..c).rev() {
                     let dest = Self::idx(r, cc);
                     if (occupied & (1 << dest)) != 0 { break; }
-                    if !self.is_restricted_violation(r, cc, i) { return true; }
+                    if !self.is_restricted_violation(r, cc, i) { 
+                        if is_safe_move(r, c, r, cc) { return true; }
+                    }
                 }
                 // RIGHT
                 for cc in c+1..7 {
                     let dest = Self::idx(r, cc);
                     if (occupied & (1 << dest)) != 0 { break; }
-                    if !self.is_restricted_violation(r, cc, i) { return true; }
+                    if !self.is_restricted_violation(r, cc, i) { 
+                        if is_safe_move(r, c, r, cc) { return true; }
+                    }
                 }
             }
         }
@@ -735,6 +766,68 @@ impl GameState {
         
         // Thresholds
         attackers <= 2 && defenders <= 1
+    }
+
+    // ======================================
+    //            HEURISTICS           
+    // ======================================
+
+    /// Fast check if a move results in a capture. 
+    /// Used for Hard Playouts in MCTS.
+    pub fn is_capture_move(&self, coords: &[usize; 4]) -> bool {
+        let (sr, sc, er, ec) = (coords[0], coords[1], coords[2], coords[3]);
+        let src_mask = 1 << Self::idx(sr, sc);
+        
+        // Identify who is moving
+        let mover_is_black = (self.black_pieces & src_mask) != 0;
+        
+        // We need the state AFTER the move to check anvil conditions strictly,
+        // but for a heuristic, we can approximate using the current state 
+        // assuming the 'dst' square becomes occupied by the mover.
+        let dst_idx = Self::idx(er, ec);
+        
+        let neighbors = self.get_orthogonal_neighbors(dst_idx);
+        for &victim_idx in &neighbors {
+            let v_mask = 1 << victim_idx;
+            
+            // 1. Check if neighbor is an enemy
+            let is_victim_black = (self.black_pieces & v_mask) != 0;
+            let is_victim_white = (self.white_pieces & v_mask) != 0;
+            let is_victim_king = (self.king_piece & v_mask) != 0;
+
+            if !is_victim_black && !is_victim_white && !is_victim_king { continue; }
+
+            let is_enemy = if mover_is_black { is_victim_white || is_victim_king } 
+                           else { is_victim_black };
+            
+            if !is_enemy { continue; }
+
+            // 2. Check King Capture (Simplified for speed: just check if surrounded by enough enemies)
+            // (You can implement full king logic here if you want strict accuracy, 
+            // but usually standard capture logic covers 90% of cases).
+            if is_victim_king {
+                 // Reuse your existing logic or a simplified version
+                 if self.check_king_captured_sim(self.black_pieces | (1<<dst_idx), self.king_piece) {
+                     return true;
+                 }
+                 continue;
+            }
+
+            // 3. Check Standard Capture
+            // We need an "anvil" on the other side of the victim.
+            if let Some(anvil_idx) = self.get_anvil_index(dst_idx, victim_idx) {
+                // The anvil square must be hostile to the victim.
+                // Note: The mover is at 'dst_idx', the anvil is at 'anvil_idx'.
+                
+                // Mover is Black -> Victim is White -> Anvil must be Black/Corner/Throne
+                // Mover is White -> Victim is Black -> Anvil must be White/Corner/Throne
+                
+                if self.is_hostile_sim(anvil_idx, is_victim_black, self.black_pieces, self.white_pieces, self.king_piece) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     // ======================================

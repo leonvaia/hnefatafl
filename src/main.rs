@@ -12,6 +12,7 @@ use std::time::Instant;
 use rand::prelude::IndexedRandom;
 use hnefatafl::GameState;
 use mcts::MCTS;
+use crate::mcts::SimulationType;
 
 #[derive(Copy, Clone)]
 enum GameMode {
@@ -96,7 +97,7 @@ fn play_games(mode: GameMode, bot_side: char, game_count: usize, folder_name: &s
     let time = Instant::now();
     
     for i in 0..game_count {
-        let mut engine = MCTS::new(0xCAFEBABE, 200_000);
+        let mut engine = MCTS::new(0xCAFEBABE, 200_000, SimulationType::Light);
         let file_name = format!("{}/{}.txt", folder_name, i);
         play_game(&mut engine, mode, bot_side,true, &file_name);
     }
@@ -156,8 +157,8 @@ fn play_bot_games(game_count: usize, folder_name: &str) {
     println!("{} games will be played with both sides having 200_000 iterations per move", game_count);
     let total_time = Instant::now();
     for i in 0..game_count {
-        let mut engine_white = MCTS::new(0xCAFEBABE, 200_000);
-        let mut engine_black = MCTS::new(0xDEADBEEF, 200_000);
+        let mut engine_white = MCTS::new(0xCAFEBABE, 200_000, SimulationType::Light);
+        let mut engine_black = MCTS::new(0xDEADBEEF, 200_000, SimulationType::Light);
 
         let file_name = format!("{}/{}.txt", folder_name, i);
 
@@ -182,8 +183,8 @@ fn play_bot_games(game_count: usize, folder_name: &str) {
 
     let total_time = Instant::now();
     for i in 0..game_count {
-        let mut engine_white = MCTS::new(0xCAFEBABE, white_iterations);
-        let mut engine_black = MCTS::new(0xDEADBEEF, black_iterations);
+        let mut engine_white = MCTS::new(0xCAFEBABE, white_iterations, SimulationType::Light);
+        let mut engine_black = MCTS::new(0xDEADBEEF, black_iterations, SimulationType::Light);
 
         let file_name = format!("{}/{}.txt", &new_folder_name, i);
 
@@ -215,8 +216,8 @@ fn play_bot_games_parallel(thread_count: usize, game_count: usize) {
         for _ in 0..game_count {
             let white_seed = 0xCAFEBABE + (thread_id as u64 * 100);
             let black_seed = 0xDEADBEEF + (thread_id as u64 * 100);
-            let mut engine_white = MCTS::new(white_seed, white_iterations);
-            let mut engine_black = MCTS::new(black_seed, black_iterations);
+            let mut engine_white = MCTS::new(white_seed, white_iterations, SimulationType::Light);
+            let mut engine_black = MCTS::new(black_seed, black_iterations, SimulationType::Light);
 
             // Use your existing logic to play the game
             for i in 0..game_count {
@@ -260,8 +261,8 @@ fn play_increasing_bot_games(thread_count: usize, folder_name: &str) {
             let white_seed = 0xCAFEBABE + (thread_id as u64 * 100) + attempt;
             let black_seed = 0xDEADBEEF + (thread_id as u64 * 100) + attempt;
 
-            let mut engine_white = MCTS::new(white_seed, white_iterations);
-            let mut engine_black = MCTS::new(black_seed, black_iterations);
+            let mut engine_white = MCTS::new(white_seed, white_iterations, SimulationType::Light);
+            let mut engine_black = MCTS::new(black_seed, black_iterations, SimulationType::Light);
 
             // Create a unique filename for this specific attempt
             let file_name = format!("{}/trial_{}_iters_{}.txt", folder_name, thread_id, white_iterations);
@@ -297,6 +298,74 @@ fn announce_result<W: Write>(result: char, writer: &mut W) -> io::Result<()> {
     Ok(())
 }
 
+fn run_simulation_test(
+    test_name: &str,
+    games_per_side: usize,
+    config_a: (SimulationType, u32), // (Type, Iterations)
+    config_b: (SimulationType, u32), 
+    folder_root: &str
+) {
+    let mut wins_a = 0;
+    let mut wins_b = 0;
+    let mut draws = 0;
+
+    println!("============================================================");
+    println!("Starting Test: {}", test_name);
+    println!("Config A: {:?} @ {} iters", config_a.0, config_a.1);
+    println!("Config B: {:?} @ {} iters", config_b.0, config_b.1);
+    println!("============================================================");
+
+    let setup_dir = format!("{}/{}", folder_root, test_name.replace(" ", "_"));
+    fs::create_dir_all(&setup_dir).expect("Could not create directory");
+
+    // === PHASE 1: A is White, B is Black ===
+    println!("Phase 1: A (White) vs B (Black)");
+    for i in 0..games_per_side {
+        let file_name = format!("{}/game_ph1_{}.txt", setup_dir, i);
+        
+        // Ensure distinct seeds
+        let mut engine_a = MCTS::new(0xCAFE + i as u64, config_a.1, config_a.0);
+        let mut engine_b = MCTS::new(0xBEEF + i as u64, config_b.1, config_b.0);
+
+        let result = play_bot_vs_bot(&mut engine_a, &mut engine_b, true, &file_name);
+        
+        match result {
+            'W' => { wins_a += 1; print!("A"); },
+            'B' => { wins_b += 1; print!("B"); },
+             _  => { draws += 1; print!("D"); },
+        }
+        io::stdout().flush().unwrap();
+    }
+    println!("\nPhase 1 Complete.");
+
+    // === PHASE 2: B is White, A is Black ===
+    println!("Phase 2: B (White) vs A (Black)");
+    for i in 0..games_per_side {
+        let file_name = format!("{}/game_ph2_{}.txt", setup_dir, i);
+        
+        // Ensure distinct seeds
+        let mut engine_b = MCTS::new(0xCAFE + 1000 + i as u64, config_b.1, config_b.0);
+        let mut engine_a = MCTS::new(0xBEEF + 1000 + i as u64, config_a.1, config_a.0);
+
+        let result = play_bot_vs_bot(&mut engine_b, &mut engine_a, true, &file_name);
+        
+        match result {
+            'W' => { wins_b += 1; print!("B"); },
+            'B' => { wins_a += 1; print!("A"); },
+             _  => { draws += 1; print!("D"); },
+        }
+        io::stdout().flush().unwrap();
+    }
+    println!("\nPhase 2 Complete.");
+
+    println!("------------------------------------------------------------");
+    println!("FINAL RESULTS for {}", test_name);
+    println!("Config A Wins: {}", wins_a);
+    println!("Config B Wins: {}", wins_b);
+    println!("Draws:         {}", draws);
+    println!("------------------------------------------------------------\n");
+}
+
 fn main() {
 
     println!("Welcome to Hnefatafl!\n");
@@ -309,6 +378,7 @@ fn main() {
     println!("4 -> bot vs bot");
     println!("5 -> bot vs bot (increasing iterations)");
     println!("6 -> bot vs bot (threads)");
+    println!("7 -> TO DO: simulation");
     let mut input = String::new();
     io::stdin().read_line(&mut input).unwrap();
 
@@ -356,8 +426,56 @@ fn main() {
         let game_count : usize = input2.trim().parse().expect("amount of games has to be given as a number");
         println!("Starting {} threads playing {} games of engine vs engine each", thread_count, game_count);
         play_bot_games_parallel(thread_count, game_count);
+    } else if input.trim() == "7" {
+        let games_per_side = 1;
+        let iteration_tiers = [100_000, 200_000, 400_000];
+
+        println!("Starting Comparative Benchmark Suite");
+        println!("Tiers: {:?}", iteration_tiers);
+
+        for &iters in &iteration_tiers {
+            println!("\n============================================");
+            println!("STARTING TIER: {} Iterations", iters);
+            println!("============================================");
+
+            // Create a specific folder for this iteration tier
+            // e.g., "benchmark_200000_iters"
+            let folder = format!("benchmark_{}_iters", iters);
+            std::fs::create_dir_all(&folder).ok();
+
+            // Test 1: Single Light vs Single Heavy
+            // (100 games each side)
+            run_simulation_test(
+                "1_Light_vs_Heavy", 
+                games_per_side, 
+                (SimulationType::Light, iters), 
+                (SimulationType::Heavy, iters), 
+                &folder
+            );
+
+            // Test 2: Single Light vs Parallel Light (Batch 8)
+            // (100 games each side)
+            run_simulation_test(
+                "2_Light_vs_ParallelLight", 
+                games_per_side, 
+                (SimulationType::Light, iters), 
+                (SimulationType::ParallelLight(8), iters), 
+                &folder
+            );
+
+            // Test 3: Parallel Light (Batch 8) vs Parallel Heavy (Batch 8)
+            // (100 games each side)
+            run_simulation_test(
+                "3_ParallelLight_vs_ParallelHeavy", 
+                games_per_side, 
+                (SimulationType::ParallelLight(8), iters), 
+                (SimulationType::ParallelHeavy(8), iters), 
+                &folder
+            );
+        }
+        println!("\nAll benchmarks complete.");
     } else {
-        let mut engine = MCTS::new(0xCAFEBABE, 200_000);
+        let mut engine = MCTS::new(0xCAFEBABE, 200_000, SimulationType::Light);
         play_game(&mut engine, mode, 'W', false, "");
     }
 }

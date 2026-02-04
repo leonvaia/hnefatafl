@@ -2,6 +2,7 @@
 
 use std::io::Write;
 use rand::prelude::*;
+use rayon::prelude::*;
 
 use crate::zobrist::Zobrist;
 use crate::transposition::TT;
@@ -9,6 +10,14 @@ use crate::transposition::MAX_ITER;
 use crate::transposition::WINS_BITS;
 use crate::transposition::CollisionType;
 use crate::hnefatafl::GameState;
+
+#[derive(Clone, Copy, Debug)]
+pub enum SimulationType {
+    Light,                // Single random playout
+    Heavy,                // Single hard (heuristic) playout
+    ParallelLight(usize), // N random playouts in parallel
+    ParallelHeavy(usize), // N hard playouts in parallel
+}
 
 /// Negamax values.
 const WIN: isize = 1;
@@ -41,10 +50,12 @@ pub struct MCTS {
     written_entries: usize,
     overwritten_entries_in: usize,
     overwritten_entries_out: usize,
+
+    pub sim_type: SimulationType,
 }
 
 impl MCTS {
-    pub fn new(seed: u64, iterations_per_move: u32, ) -> Self {
+    pub fn new(seed: u64, iterations_per_move: u32, sim_type: SimulationType) -> Self {
         // To prevent overflow check: 2^VISITS_BITS > 2^GEN_BITS * iterations_per_move
         if iterations_per_move >= MAX_ITER {
             panic!("Number of iteration passed might cause an overflow.");
@@ -61,6 +72,7 @@ impl MCTS {
             written_entries: 0,
             overwritten_entries_in: 0,
             overwritten_entries_out: 0,
+            sim_type,
         }
     }
 
@@ -123,6 +135,14 @@ impl MCTS {
 
             // We scale the wins to match the ratio of the score.
             entry.set_n_wins(score * (SOLVED_THRESHOLD as isize));
+        }
+    }
+
+    #[inline]
+    fn get_batch_size(&self) -> usize {
+        match self.sim_type {
+            SimulationType::Light | SimulationType::Heavy => 1,
+            SimulationType::ParallelLight(n) | SimulationType::ParallelHeavy(n) => n,
         }
     }
 }
@@ -263,10 +283,11 @@ impl MCTS {
         if root_visits < 1 { root_visits = 1; }
 
         // SEARCH GAME TREE: SELECTION
+        let batch_size = self.get_batch_size();
         for _ in 1..self.iterations_per_move {
             // Selection and Backpropagation to the root.
             root_wins += self.selection(root, root_visits, writer); // Increment value.
-            root_visits += 1;
+            root_visits += batch_size;
         }
 
         // BACKPROPAGATION to root.
@@ -308,6 +329,11 @@ impl MCTS {
     /// ========================
     /// Returns the result with the perspective of state.player
     fn selection<W: Write>(&mut self, state: &GameState, node_visits: usize, writer: &mut W) -> isize {
+        let batch_size = self.get_batch_size(); // <--- Get batch size
+        let scaled_win = WIN * (batch_size as isize);
+        let scaled_loss = LOSS * (batch_size as isize);
+        let scaled_draw = DRAW * (batch_size as isize);
+        
         // === CHECK IF STATE IS ALREADY SOLVED IN TT ===
         // If we found this state in the TT with high visit count,
         // it means we already determined it is terminal in a previous path/search.
@@ -315,13 +341,10 @@ impl MCTS {
             let bucket = self.transpositions.get_bucket(state.hash);
             if let Some(entry) = bucket.get_entry(state.hash) {
                 if entry.get_n_visits() >= SOLVED_THRESHOLD {
-                    // Extract result (Mean Value).
-                    // We can just divide wins by visits, or use integer division.
-                    // Since visits is huge, the ratio is stable.
-                    let score = if entry.get_n_wins() > 0 { WIN }
-                                else if entry.get_n_wins() < 0 { LOSS }
-                                else { DRAW };
-                    return score;
+                    // RETURN SCALED SCORE
+                    return if entry.get_n_wins() > 0 { scaled_win }
+                           else if entry.get_n_wins() < 0 { scaled_loss }
+                           else { scaled_draw };
                 }
             }
         }
@@ -332,9 +355,9 @@ impl MCTS {
         // Game over.
         if let Some(winner) = state.check_game_over() {
             let score = match winner {
-                'D' => DRAW,
-                w if w == state.player => WIN,
-                _ => LOSS,
+                'D' => scaled_draw,
+                w if w == state.player => scaled_win,
+                _ => scaled_loss,
             };
 
             // IMPORTANT: If loss is due to Repetition, it is context-dependent (history).
@@ -348,19 +371,21 @@ impl MCTS {
 
         // Heuristics for White.
         if state.heuristic_wins_w() {
-            terminal_score = Some(if state.player == 'W' { WIN } else { LOSS });
+            terminal_score = Some(if state.player == 'W' { scaled_win } else { scaled_loss });
         }
 
         // Heuristics for Black.
         if state.player == 'B' {
             if state.heuristic_capture_king().0 {
-                terminal_score = Some(WIN);
+                terminal_score = Some(scaled_win);
             }
         }
 
         // If found a terminal state, mark it and return.
         if let Some(score) = terminal_score {
-            self.mark_terminal(state.hash, score);
+            // Note: Mark terminal uses standard 1/-1, that's fine, it handles scaling internally via SOLVED_THRESHOLD
+            // But we must return the scaled score up the stack
+            self.mark_terminal(state.hash, if score > 0 { WIN } else { LOSS });
             return score;
         }
 
@@ -433,9 +458,18 @@ impl MCTS {
                 is_expansion_phase = false;
             } else {
                 // No moves available. Should be caught by terminal check.
-                writeln!(writer, "Error: Selection step has no moves but game over wasn't caught.").expect("could not write to output");
-                if state.player == 'W' { return LOSS; }
-                else { return WIN; }
+                // Result: The current player loses immediately.
+                // writeln!(writer, "Error: Selection step has no moves but game over wasn't caught.").expect("could not write to output");
+                
+                // Define the result (LOSS for the current player)
+                let batch_size = self.get_batch_size();
+                let scaled_score = LOSS * (batch_size as isize);
+
+                // Mark this node as SOLVED in the Transposition Table
+                // We pass the unscaled 'LOSS' (-1) because mark_terminal handles the scaling internally.
+                self.mark_terminal(state.hash, LOSS);
+
+                return scaled_score;
             }
         }
         
@@ -443,6 +477,8 @@ impl MCTS {
         let mut next_state = state.clone();
         next_state.move_piece(&selected_move, &self.z_table, true, writer);
         let result_for_child_node: isize;
+
+        let visits_added = batch_size;
 
         if is_expansion_phase {
             // === EXPANSION ===
@@ -464,7 +500,14 @@ impl MCTS {
             else if is_new_write { self.written_entries += 1; }
 
             // === SIMULATION ===
-            result_for_child_node = self.simulation(&next_state, writer);
+            let sim_score = match self.sim_type {
+                SimulationType::Light => self.simulation(&next_state),
+                SimulationType::Heavy => self.simulation_hard(&next_state),
+                SimulationType::ParallelLight(batch) => self.simulation_parallel(&next_state, batch, false),
+                SimulationType::ParallelHeavy(batch) => self.simulation_parallel(&next_state, batch, true),
+            };
+
+            result_for_child_node = sim_score;
         } else {
             // === RECURSIVE SELECTION ===
             result_for_child_node = self.selection(&next_state, best_move_visits, writer);
@@ -476,7 +519,7 @@ impl MCTS {
             let bucket = self.transpositions.get_bucket(selected_hash);
             if let Some(entry) = bucket.get_entry(selected_hash) {
                 entry.set_generation(self.generation);
-                entry.add_n_visits(1);
+                entry.add_n_visits(visits_added);
                 entry.add_n_wins(result_for_child_node);
             } else {
                 writeln!(writer, "Error: Entry wasn't found during backpropagation.").expect("could not write to output");
@@ -500,7 +543,7 @@ impl MCTS {
                 if child_wins < 0 {
                     self.mark_terminal(state.hash, WIN);
                     // Since we found a winning move, we return WIN immediately.
-                    return WIN; 
+                    return scaled_win; 
                 }
 
                 // Case 2: Child is a PROVEN WIN for the opponent.
@@ -520,16 +563,18 @@ impl MCTS {
     ///        SIMULATION        
     /// =========================
     /// Returns the result with the perspective of state.player
-    fn simulation<W: Write>(&self, state: &GameState, writer: &mut W) -> isize {
+    fn simulation(&self, state: &GameState) -> isize {
         let mut temp_state = state.clone();
         let mut moves = Vec::with_capacity(MAX_MOVES);
         let mut rng = rand::rng();
+
+        let mut sink = std::io::sink();
 
         // Play random moves until the game is over.
         loop {
             // Check game over.
             if let Some(winner) = temp_state.check_game_over() {
-                if winner == 'T' { return DRAW; }
+                if winner == 'D' { return DRAW; }
                 else if winner == state.player { return WIN; }
                 else { return LOSS; }
             }
@@ -546,8 +591,8 @@ impl MCTS {
             // Available moves.
             temp_state.get_legal_moves(&mut moves, true);
             if moves.is_empty() {
-                writeln!(writer, "Error: Simulation step has no moves but game over wasn't caught.").expect("could not write to output");
-                writeln!(writer, "Applying rule 9 anyways...\n").expect("could not write to output");
+                // writeln!(writer, "Error: Simulation step has no moves but game over wasn't caught.").expect("could not write to output");
+                // writeln!(writer, "Applying rule 9 anyways...\n").expect("could not write to output");
                 // Current player loses (Rule 9: If a player cannot move, he loses the game).
                 // (Combined with Rule 8: If white repeats a move, he loses.)
                 if state.player == temp_state.player { return LOSS; }
@@ -558,7 +603,89 @@ impl MCTS {
             let random_move = moves.choose(&mut rng).unwrap(); // returns a reference
 
             // Apply move.
-            temp_state.move_piece(random_move, &self.z_table, true, writer);
+            temp_state.move_piece(random_move, &self.z_table, true, &mut sink);
         }
+    }
+
+    fn simulation_hard(&self, state: &GameState) -> isize {
+        let mut temp_state = state.clone();
+        let mut moves = Vec::with_capacity(MAX_MOVES);
+        let mut capture_moves = Vec::with_capacity(16);
+        let mut rng = rand::rng();
+
+        let mut sink = std::io::sink();
+
+        // Play random moves until the game is over.
+        loop {
+            // Check game over.
+            if let Some(winner) = temp_state.check_game_over() {
+                if winner == 'D' { return DRAW; }
+                else if winner == state.player { return WIN; }
+                else { return LOSS; }
+            }
+            // Heuristics (instant wins).
+            if state.heuristic_wins_w() {
+                return if state.player == 'W' { WIN } else { LOSS };
+            }
+            if state.player == 'B' {
+                if state.heuristic_capture_king().0 {
+                    return WIN;
+                }
+            }
+
+            // Available moves.
+            temp_state.get_legal_moves(&mut moves, true);
+            if moves.is_empty() {
+                // writeln!(writer, "Error: Simulation step has no moves but game over wasn't caught.").expect("could not write to output");
+                // writeln!(writer, "Applying rule 9 anyways...\n").expect("could not write to output");
+                // Current player loses (Rule 9: If a player cannot move, he loses the game).
+                // (Combined with Rule 8: If white repeats a move, he loses.)
+                if state.player == temp_state.player { return LOSS; }
+                else { return WIN; }
+            }
+
+            // === HARD PLAYOUTS ===
+            capture_moves.clear();
+
+            // Filter for captures
+            for m in &moves {
+                if temp_state.is_capture_move(m) {
+                    capture_moves.push(*m);
+                }
+            }
+
+            let selected_move = if !capture_moves.is_empty() {
+                // 80% chance to pick a capture move, 20% random (Exploration)
+                if rng.random_bool(0.8) {
+                    capture_moves.choose(&mut rng).unwrap()
+                } else {
+                    moves.choose(&mut rng).unwrap()
+                }
+            } else {
+                // No captures available, play random
+                moves.choose(&mut rng).unwrap()
+            };
+
+            // Apply move.
+            temp_state.move_piece(selected_move, &self.z_table, true, &mut sink);
+        }
+    }
+
+    /// Run multiple simulations in parallel using Rayon.
+    /// Returns: (Total Score, Count of Simulations)
+    fn simulation_parallel(&self, state: &GameState, batch_size: usize, use_hard: bool) -> isize {
+        // Parallel iterator using Rayon
+        let total_score: isize = (0..batch_size)
+            .into_par_iter()
+            .map(|_| {
+                if use_hard {
+                    self.simulation_hard(state)
+                } else {
+                    self.simulation(state)
+                }
+            })
+            .sum();
+
+        total_score
     }
 }
