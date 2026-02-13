@@ -18,6 +18,16 @@ pub enum SimulationType {
     ParallelLight(usize), // N random playouts in parallel
     ParallelHeavy(usize), // N hard playouts in parallel
 }
+impl SimulationType {
+    /// Returns the number of threads/simulations run in a single batch.
+    #[inline]
+    pub fn batch_size(&self) -> usize {
+        match *self {
+            SimulationType::Light | SimulationType::Heavy => 1,
+            SimulationType::ParallelLight(n) | SimulationType::ParallelHeavy(n) => n,
+        }
+    }
+}
 
 /// Negamax values.
 const WIN: isize = 1;
@@ -56,8 +66,9 @@ pub struct MCTS {
 
 impl MCTS {
     pub fn new(seed: u64, iterations_per_move: u32, sim_type: SimulationType) -> Self {
-        // To prevent overflow check: 2^VISITS_BITS > 2^GEN_BITS * iterations_per_move
-        if iterations_per_move >= MAX_ITER {
+        // To prevent overflow check: 2^VISITS_BITS > 2^GEN_BITS * iterations_per_move * batch_size
+        let batch_size = sim_type.batch_size() as u32;
+        if iterations_per_move * batch_size >= MAX_ITER {
             panic!("Number of iteration passed might cause an overflow.");
         }
 
@@ -135,14 +146,6 @@ impl MCTS {
 
             // We scale the wins to match the ratio of the score.
             entry.set_n_wins(score * (SOLVED_THRESHOLD as isize));
-        }
-    }
-
-    #[inline]
-    fn get_batch_size(&self) -> usize {
-        match self.sim_type {
-            SimulationType::Light | SimulationType::Heavy => 1,
-            SimulationType::ParallelLight(n) | SimulationType::ParallelHeavy(n) => n,
         }
     }
 }
@@ -284,7 +287,7 @@ impl MCTS {
         if root_visits < 1 { root_visits = 1; }
 
         // SEARCH GAME TREE: SELECTION
-        let batch_size = self.get_batch_size();
+        let batch_size = self.sim_type.batch_size();
         for _ in 1..self.iterations_per_move {
             // Selection and Backpropagation to the root.
             root_wins += self.selection(root, root_visits, writer); // Increment value.
@@ -331,7 +334,7 @@ impl MCTS {
 
     /// Returns the result with the perspective of state.player
     fn selection<W: Write>(&mut self, state: &GameState, node_visits: usize, writer: &mut W) -> isize {
-        let batch_size = self.get_batch_size(); // <--- Get batch size
+        let batch_size = self.sim_type.batch_size(); // <--- Get batch size
         let scaled_win = WIN * (batch_size as isize);
         let scaled_loss = LOSS * (batch_size as isize);
         let scaled_draw = DRAW * (batch_size as isize);
@@ -461,7 +464,7 @@ impl MCTS {
                 // writeln!(writer, "Error: Selection step has no moves but game over wasn't caught.").expect("could not write to output");
                 
                 // Define the result (LOSS for the current player)
-                let batch_size = self.get_batch_size();
+                let batch_size = self.sim_type.batch_size();
                 let scaled_score = LOSS * (batch_size as isize);
 
                 // Mark this node as SOLVED in the Transposition Table
