@@ -8,9 +8,10 @@ const TT_DIM_BITS: u64 = 24; // When decreasing this under 24, modify also bit l
 const TT_DIM: usize = 1 << TT_DIM_BITS;
 const TT_DIM_MINUS_1: usize = TT_DIM - 1;
 
-/// ===================
-///        Entry     
-/// ===================
+// ===================
+//        Entry     
+// ===================
+
 /// Bit layout:
 /// hash:       u40 = 64 bit - TT_DIM bit
 /// generation: u15 / u13
@@ -68,9 +69,10 @@ pub enum CollisionType {
 }
 
 impl TT_entry {
-    /// ================================
-    ///            Getters
-    /// ================================
+    // ================================
+    //            Getters
+    // ================================
+
     /// Check whether the entry is empty.
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
@@ -115,9 +117,9 @@ impl TT_entry {
         extended as isize
     }
 
-    /// =================================
-    ///            Setters
-    /// =================================
+    // =================================
+    //            Setters
+    // =================================
     #[inline]
     pub fn set_hash(&mut self, hash: u64) {
         // Clear the old hash bits
@@ -168,9 +170,10 @@ impl TT_entry {
     }
 }
 
-/// ==================
-///       Bucket 
-/// ==================
+// ==================
+//       Bucket 
+// ==================
+
 /// align(64) aligns to cache lines (optimized and avoids False Sharing).
 #[repr(C, align(64))]
 #[derive(Clone, Copy)]
@@ -188,12 +191,9 @@ impl TT_bucket {
     /// Get entry corresponding to a hash.
     #[inline]
     pub fn get_entry(&mut self, hash: u64) -> Option<&mut TT_entry> {
-        for entry in &mut self.entries {
-            if !entry.is_empty() && entry.hash_equals(hash) {
-                return Some(entry); // Found entry.
-            }
-        }
-        None // Not found entry.
+        self.entries
+        .iter_mut()
+        .find(|entry| !entry.is_empty() && entry.hash_equals(hash))
     }
 
     /// Overwrite entry corresponding to the index.
@@ -205,9 +205,10 @@ impl TT_bucket {
         self.entries[index].set_n_wins(wins);
     }
 
-    /// =====================
-    ///     MCTS EXPANSION
-    /// =====================
+    // =====================
+    //     MCTS EXPANSION
+    // =====================
+
     /// Look for the entry in the bucket.
     /// If found, do nothing.
     /// If not found, add it with zero values; overwrite according to collision handling policy:
@@ -217,7 +218,7 @@ impl TT_bucket {
         let mut min_index = usize::MAX;
 
         // Find least visited entry within generation_range.
-        for (index, entry) in (&mut self.entries).into_iter().enumerate() {
+        for (index, entry) in self.entries.iter_mut().enumerate() {
             // if entry already exists.
             if !entry.is_empty() && entry.hash_equals(hash) {
                 entry.set_generation(generation);
@@ -242,7 +243,7 @@ impl TT_bucket {
         // If not found i.e. bucket is full within range => BAD collision
         if min_visits == usize::MAX {
             // Find least visited entry in range.
-            for (index, entry) in (&mut self.entries).into_iter().enumerate() {
+            for (index, entry) in self.entries.iter_mut().enumerate() {
                 if entry.get_n_visits() < min_visits {
                     min_visits = entry.get_n_visits();
                     min_index = index;
@@ -255,13 +256,13 @@ impl TT_bucket {
 
         // Overwrite the least visited entry out of the generation_range (GOOD collision).
         self.overwrite(min_index, hash, generation, 0, 0);
-        return Some(CollisionType::OverwrittenOUT);
+        Some(CollisionType::OverwrittenOUT)
     }
 }
 
-/// ===========================
-///     Transposition table
-/// ===========================
+// ===========================
+//     Transposition table
+// ===========================
 pub struct TT {
     pub buckets: Box<[TT_bucket]>,
 }

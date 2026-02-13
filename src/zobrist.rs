@@ -1,4 +1,4 @@
-/// Zobrist hashing.
+//! Zobrist hashing.
 
 use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
@@ -20,12 +20,8 @@ impl Zobrist {
         let mut rng = StdRng::seed_from_u64(seed);
 
         let mut table = [[[0u64; PIECE_TYPES]; BOARD_SIZE]; BOARD_SIZE];
-        for r in 0..BOARD_SIZE {
-            for c in 0..BOARD_SIZE {
-                for p in 0..PIECE_TYPES {
-                    table[r][c][p] = rng.random::<u64>();
-                }
-            }
+        for piece in table.iter_mut().flatten().flatten() {
+            *piece = rng.random::<u64>();
         }
 
         Self {

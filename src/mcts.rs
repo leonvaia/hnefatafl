@@ -147,19 +147,20 @@ impl MCTS {
     }
 }
 
-/// ======================
-///     MCTS Algorithm
-/// ======================
+// ======================
+//     MCTS Algorithm
+// ======================
 impl MCTS {
     /// Apply engine move to state.
     pub fn computer_move<W: Write>(&mut self, state: &mut GameState, writer: &mut W) {
-        let m = self.get_move(&state, writer);
+        let m = self.get_move(state, writer);
         state.move_piece(&m, &self.z_table, true, writer);
     }
 
     /// Get best move according to MCTS.
     fn get_move<W: Write>(&mut self, root: &GameState, writer: &mut W) -> [usize; 4] {
         // Heuristics.
+        #[allow(clippy::collapsible_else_if)]
         if root.player == 'W' {
             // 1.
             if let (true, Some(winning_move)) = root.heuristic_king_to_corner() {
@@ -224,11 +225,11 @@ impl MCTS {
                 if score == 0.0 {
                     // Case 1: proven win (opponent loses).
                     writeln!(writer, "Found PROVEN WIN move!").ok();
-                    return m.clone();
+                    return *m;
                 } else if score == 1.0 {
                     // Case 2: proven loss (opponent wins).
                     proven_losses += 1;
-                    forced_loss_move = Some(m.clone()); // Keep one as a fallback.
+                    forced_loss_move = Some(*m); // Keep one as a fallback.
                     continue;
                 }
             }
@@ -237,7 +238,7 @@ impl MCTS {
             if (visits as f64) > best_metric {
                 best_metric = visits as f64;
                 best_wins = raw_wins;
-                best_move = Some(m.clone());
+                best_move = Some(*m);
             }
         }
         
@@ -324,9 +325,10 @@ impl MCTS {
         writeln!(writer, "parent visits: {}", root_visits).expect("could not write to output");
     }
 
-    /// ========================
-    ///        SELECTION        
-    /// ========================
+    // ========================
+    //        SELECTION        
+    // ========================
+
     /// Returns the result with the perspective of state.player
     fn selection<W: Write>(&mut self, state: &GameState, node_visits: usize, writer: &mut W) -> isize {
         let batch_size = self.get_batch_size(); // <--- Get batch size
@@ -339,13 +341,12 @@ impl MCTS {
         // it means we already determined it is terminal in a previous path/search.
         {
             let bucket = self.transpositions.get_bucket(state.hash);
-            if let Some(entry) = bucket.get_entry(state.hash) {
-                if entry.get_n_visits() >= SOLVED_THRESHOLD {
-                    // RETURN SCALED SCORE
-                    return if entry.get_n_wins() > 0 { scaled_win }
-                           else if entry.get_n_wins() < 0 { scaled_loss }
-                           else { scaled_draw };
-                }
+            if let Some(entry) = bucket.get_entry(state.hash)
+            && entry.get_n_visits() >= SOLVED_THRESHOLD {
+                // RETURN SCALED SCORE
+                return if entry.get_n_wins() > 0 { scaled_win }
+                        else if entry.get_n_wins() < 0 { scaled_loss }
+                        else { scaled_draw };
             }
         }
         
@@ -375,10 +376,9 @@ impl MCTS {
         }
 
         // Heuristics for Black.
-        if state.player == 'B' {
-            if state.heuristic_capture_king().0 {
-                terminal_score = Some(scaled_win);
-            }
+        if state.player == 'B'
+        && state.heuristic_capture_king().0 {
+            terminal_score = Some(scaled_win);
         }
 
         // If found a terminal state, mark it and return.
@@ -412,12 +412,11 @@ impl MCTS {
                 let mut child_visits = 0;
                 let mut child_wins = 0isize;
                 // Try to retrieve the child from the Transposition Table.
-                if let Some(entry) = child_bucket.get_entry(child_hash) {
-                    if entry.get_n_visits() > 0 {
-                        is_visited = true;
-                        child_visits = entry.get_n_visits();
-                        child_wins = entry.get_n_wins();
-                    }
+                if let Some(entry) = child_bucket.get_entry(child_hash)
+                && entry.get_n_visits() > 0 {
+                    is_visited = true;
+                    child_visits = entry.get_n_visits();
+                    child_wins = entry.get_n_wins();
                 }
 
                 if is_visited {
@@ -433,13 +432,13 @@ impl MCTS {
 
                     if ucb > max_ucb_value {
                         max_ucb_value = ucb;
-                        best_move = Some(m.clone());
+                        best_move = Some(*m);
                         best_move_hash = child_hash;
                         best_move_visits = child_visits;
                     }
                 } else {
                     // If unvisited, store it for later decision.
-                    unvisited_moves.push((m.clone(), child_hash));
+                    unvisited_moves.push((*m, child_hash));
                 }
             }
 
@@ -447,7 +446,7 @@ impl MCTS {
             if !unvisited_moves.is_empty() {
                 // Pick random unvisited child.
                 let idx = rand::rng().random_range(0..unvisited_moves.len());
-                let (m, h) = unvisited_moves[idx].clone();
+                let (m, h) = unvisited_moves[idx];
                 selected_move = m;
                 selected_hash = h;
                 is_expansion_phase = true;
@@ -474,7 +473,7 @@ impl MCTS {
         }
         
         // === EXECUTE MOVE ===
-        let mut next_state = state.clone();
+        let mut next_state = *state;
         next_state.move_piece(&selected_move, &self.z_table, true, writer);
         let result_for_child_node: isize;
 
@@ -556,15 +555,16 @@ impl MCTS {
         }
 
         // Return result with the perspective of the current node.
-        return -result_for_child_node;
+        -result_for_child_node
     }
 
-    /// =========================
-    ///        SIMULATION        
-    /// =========================
+    // =========================
+    //        SIMULATION        
+    // =========================
+    
     /// Returns the result with the perspective of state.player
     fn simulation(&self, state: &GameState) -> isize {
-        let mut temp_state = state.clone();
+        let mut temp_state = *state;
         let mut moves = Vec::with_capacity(MAX_MOVES);
         let mut rng = rand::rng();
 
@@ -582,10 +582,9 @@ impl MCTS {
             if state.heuristic_wins_w() {
                 return if state.player == 'W' { WIN } else { LOSS };
             }
-            if state.player == 'B' {
-                if state.heuristic_capture_king().0 {
-                    return WIN;
-                }
+            if state.player == 'B' 
+            && state.heuristic_capture_king().0 {
+                return WIN;
             }
 
             // Available moves.
@@ -608,7 +607,7 @@ impl MCTS {
     }
 
     fn simulation_hard(&self, state: &GameState) -> isize {
-        let mut temp_state = state.clone();
+        let mut temp_state = *state;
         let mut moves = Vec::with_capacity(MAX_MOVES);
         let mut capture_moves = Vec::with_capacity(16);
         let mut rng = rand::rng();
@@ -627,10 +626,9 @@ impl MCTS {
             if state.heuristic_wins_w() {
                 return if state.player == 'W' { WIN } else { LOSS };
             }
-            if state.player == 'B' {
-                if state.heuristic_capture_king().0 {
-                    return WIN;
-                }
+            if state.player == 'B'
+            && state.heuristic_capture_king().0 {
+                return WIN;
             }
 
             // Available moves.

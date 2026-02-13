@@ -8,8 +8,8 @@
 //! - The corner fields are hostile to all, including the King.
 //! - The throne is always hostile to black and hostile to white if not occupied.
 //! - The repetition of a game state results in a loss for white (King side).
-
-/// The moves are encoded as an array: coords = [start_row, start_col, end_row, end_col]
+//!
+//! The moves are encoded as an array: coords = [start_row, start_col, end_row, end_col]
 
 use std::io::{self, Write};
 use crate::zobrist::Zobrist;
@@ -141,9 +141,9 @@ impl GameState {
         r * 7 + c
     }
 
-    /// ===================
-    ///      NEXT HASH
-    /// ===================
+    // ===================
+    //      NEXT HASH
+    // ===================
 
     /// Compute the hash of a move without applying it.
     /// Used by MCTS for lookups in transpositions table.
@@ -302,7 +302,7 @@ impl GameState {
         let anvil = victim as isize + diff;
         
         // Bounds check
-        if anvil < 0 || anvil >= 49 { return None; }
+        if !(0..49).contains(&anvil) { return None; }
         
         // Check row wrapping for horizontal moves
         let v_c = victim % 7;
@@ -344,9 +344,9 @@ impl GameState {
         false
     }
 
-    /// ========================
-    ///      MOVE EXECUTION
-    /// ========================
+    // ========================
+    //      MOVE EXECUTION
+    // ========================
 
     /// Move piece on the board and update hash and history.
     /// The logic assumes the move to be legal.
@@ -426,48 +426,47 @@ impl GameState {
         // Check the four neighbors.
         let neighbors = self.get_orthogonal_neighbors(dst_idx);
         for &v_idx in &neighbors {
-             let mask = 1 << v_idx;
-             let is_b = (self.black_pieces & mask) != 0;
-             let is_w = (self.white_pieces & mask) != 0;
-             let is_k = (self.king_piece & mask) != 0;
+            let mask = 1 << v_idx;
+            let is_b = (self.black_pieces & mask) != 0;
+            let is_w = (self.white_pieces & mask) != 0;
+            let is_k = (self.king_piece & mask) != 0;
 
-             if !is_b && !is_w && !is_k { continue; }
+            if !is_b && !is_w && !is_k { continue; }
 
-             // Determine if enemy.
-             let is_enemy = if mover_type == 0 { is_w || is_k } else { is_b };
-             if !is_enemy { continue; }
+            // Determine if enemy.
+            let is_enemy = if mover_type == 0 { is_w || is_k } else { is_b };
+            if !is_enemy { continue; }
 
-             // King Capture.
-             if is_k {
-                 if self.check_king_captured_sim(self.black_pieces, self.king_piece) {
-                     self.king_piece &= !mask; // Remove King from board.
-                     self.hash ^= z_table.table[v_idx/7][v_idx%7][2];
-                     if !is_sim_move { writeln!(writer, "King got captured").expect("could not write to output"); }
-                 }
-                 continue;
-             }
+            // King Capture.
+            if is_k {
+                if self.check_king_captured_sim(self.black_pieces, self.king_piece) {
+                    self.king_piece &= !mask; // Remove King from board.
+                    self.hash ^= z_table.table[v_idx/7][v_idx%7][2];
+                    if !is_sim_move { writeln!(writer, "King got captured").expect("could not write to output"); }
+                }
+                continue;
+            }
 
-             // Pawn Captures.
-             if let Some(anvil_idx) = self.get_anvil_index(dst_idx, v_idx) {
-                 if self.is_hostile_sim(anvil_idx, is_b, self.black_pieces, self.white_pieces, self.king_piece) {
-                     // Remove Piece and update hash.
-                     if is_b { 
-                         self.black_pieces &= !mask; 
-                         self.hash ^= z_table.table[v_idx/7][v_idx%7][0];
-                         if !is_sim_move { writeln!(writer, "Black piece got captured").expect("could not write to output"); }
-                     } else { 
-                         self.white_pieces &= !mask;
-                         self.hash ^= z_table.table[v_idx/7][v_idx%7][1];
-                         if !is_sim_move { writeln!(writer, "White piece got captured").expect("could not write to output"); }
-                     }
-                 }
-             }
+            // Pawn Captures.
+            if let Some(anvil_idx) = self.get_anvil_index(dst_idx, v_idx)
+            && self.is_hostile_sim(anvil_idx, is_b, self.black_pieces, self.white_pieces, self.king_piece) {
+                // Remove Piece and update hash.
+                if is_b { 
+                    self.black_pieces &= !mask; 
+                    self.hash ^= z_table.table[v_idx/7][v_idx%7][0];
+                    if !is_sim_move { writeln!(writer, "Black piece got captured").expect("could not write to output"); }
+                } else { 
+                    self.white_pieces &= !mask;
+                    self.hash ^= z_table.table[v_idx/7][v_idx%7][1];
+                    if !is_sim_move { writeln!(writer, "White piece got captured").expect("could not write to output"); }
+                }
+            }
         }
     }
 
-    /// =========================
-    ///      MOVE GENERATION
-    /// =========================
+    // =========================
+    //      MOVE GENERATION
+    // =========================
     
     /// Return true if the given player has at least one legal move.
     /// Function called only by check_game_over()
@@ -510,33 +509,36 @@ impl GameState {
                 for rr in (0..r).rev() {
                     let dest = Self::idx(rr, c);
                     if (occupied & (1 << dest)) != 0 { break; } // Blocked
-                    if !self.is_restricted_violation(rr, c, i) { 
-                        // Found a physically valid move. Now check history.
-                        if is_safe_move(r, c, rr, c) { return true; }
+                    if !self.is_restricted_violation(rr, c, i)
+                    && is_safe_move(r, c, rr, c) {
+                        return true;
                     }
                 }
                 // DOWN
                 for rr in r+1..7 {
                     let dest = Self::idx(rr, c);
                     if (occupied & (1 << dest)) != 0 { break; }
-                    if !self.is_restricted_violation(rr, c, i) { 
-                        if is_safe_move(r, c, rr, c) { return true; }
+                    if !self.is_restricted_violation(rr, c, i)
+                    && is_safe_move(r, c, rr, c) {
+                        return true;
                     }
                 }
                 // LEFT
                 for cc in (0..c).rev() {
                     let dest = Self::idx(r, cc);
                     if (occupied & (1 << dest)) != 0 { break; }
-                    if !self.is_restricted_violation(r, cc, i) { 
-                        if is_safe_move(r, c, r, cc) { return true; }
+                    if !self.is_restricted_violation(r, cc, i)
+                    && is_safe_move(r, c, r, cc) {
+                        return true;
                     }
                 }
                 // RIGHT
                 for cc in c+1..7 {
                     let dest = Self::idx(r, cc);
                     if (occupied & (1 << dest)) != 0 { break; }
-                    if !self.is_restricted_violation(r, cc, i) { 
-                        if is_safe_move(r, c, r, cc) { return true; }
+                    if !self.is_restricted_violation(r, cc, i)
+                    && is_safe_move(r, c, r, cc) {
+                        return true;
                     }
                 }
             }
@@ -688,12 +690,11 @@ impl GameState {
             }
 
             // Pawn capture check
-            if let Some(anvil_idx) = self.get_anvil_index(dst_idx, victim_idx) {
-                if self.is_hostile_sim(anvil_idx, is_victim_black, next_black, next_white, next_king) {
-                    // Remove victim
-                    if is_victim_black { next_black &= !v_mask; }
-                    else { next_white &= !v_mask; }
-                }
+            if let Some(anvil_idx) = self.get_anvil_index(dst_idx, victim_idx)
+            && self.is_hostile_sim(anvil_idx, is_victim_black, next_black, next_white, next_king) {
+                // Remove victim
+                if is_victim_black { next_black &= !v_mask; }
+                else { next_white &= !v_mask; }
             }
         }
 
@@ -861,12 +862,10 @@ impl GameState {
                 }
             }
 
-            if black_count == 3 {
-                if let Some(target) = empty_spot {
-                    if let Some(mv) = self.get_black_move_to(target) {
-                        return (true, Some(mv));
-                    }
-                }
+            if black_count == 3
+            && let Some(target) = empty_spot
+            && let Some(mv) = self.get_black_move_to(target) {
+                return (true, Some(mv));
             }
             return (false, None);
         }
@@ -889,12 +888,10 @@ impl GameState {
                 }
             }
 
-            if black_count == 2 {
-                if let Some(target) = empty_spot {
-                    if let Some(mv) = self.get_black_move_to(target) {
-                        return (true, Some(mv));
-                    }
-                }
+            if black_count == 2
+            && let Some(target) = empty_spot
+            && let Some(mv) = self.get_black_move_to(target) {
+                return (true, Some(mv));
             }
             return (false, None);
         }
@@ -909,12 +906,14 @@ impl GameState {
             let w = k_idx - 1;
             let e = k_idx + 1;
             // Check West as Killer, East as Anvil
-            if self.is_hostile_anvil_for_heuristic(e) && (occupied & (1 << w)) == 0 {
-                if let Some(mv) = self.get_black_move_to(w) { return (true, Some(mv)); }
+            if self.is_hostile_anvil_for_heuristic(e) && (occupied & (1 << w)) == 0
+            && let Some(mv) = self.get_black_move_to(w) {
+                return (true, Some(mv));
             }
             // Check East as Killer, West as Anvil
-            if self.is_hostile_anvil_for_heuristic(w) && (occupied & (1 << e)) == 0 {
-                if let Some(mv) = self.get_black_move_to(e) { return (true, Some(mv)); }
+            if self.is_hostile_anvil_for_heuristic(w) && (occupied & (1 << e)) == 0
+            && let Some(mv) = self.get_black_move_to(e) {
+                return (true, Some(mv));
             }
         }
 
@@ -923,12 +922,14 @@ impl GameState {
             let n = k_idx - 7;
             let s = k_idx + 7;
             // Check North as Killer, South as Anvil
-            if self.is_hostile_anvil_for_heuristic(s) && (occupied & (1 << n)) == 0 {
-                if let Some(mv) = self.get_black_move_to(n) { return (true, Some(mv)); }
+            if self.is_hostile_anvil_for_heuristic(s) && (occupied & (1 << n)) == 0
+            && let Some(mv) = self.get_black_move_to(n) {
+                return (true, Some(mv));
             }
             // Check South as Killer, North as Anvil
-            if self.is_hostile_anvil_for_heuristic(n) && (occupied & (1 << s)) == 0 {
-                if let Some(mv) = self.get_black_move_to(s) { return (true, Some(mv)); }
+            if self.is_hostile_anvil_for_heuristic(n) && (occupied & (1 << s)) == 0
+            && let Some(mv) = self.get_black_move_to(s) {
+                return (true, Some(mv));
             }
         }
 
@@ -1033,43 +1034,35 @@ impl GameState {
 
         // 1. Top-Left (0,0)
         // Check West (if on row 0)
-        if r == 0 && c > 0 {
-            if check_path(k_idx, -1, c) { return (true, Some([r, c, 0, 0])); }
-        }
+        if r == 0 && c > 0
+        && check_path(k_idx, -1, c) { return (true, Some([r, c, 0, 0])); }
         // Check North (if on col 0)
-        if c == 0 && r > 0 {
-            if check_path(k_idx, -7, r) { return (true, Some([r, c, 0, 0])); }
-        }
+        if c == 0 && r > 0
+        && check_path(k_idx, -7, r) { return (true, Some([r, c, 0, 0])); }
 
         // 2. Top-Right (0,6)
         // Check East (if on row 0)
-        if r == 0 && c < 6 {
-            if check_path(k_idx, 1, 6 - c) { return (true, Some([r, c, 0, 6])); }
-        }
+        if r == 0 && c < 6
+        && check_path(k_idx, 1, 6 - c) { return (true, Some([r, c, 0, 6])); }
         // Check North (if on col 6)
-        if c == 6 && r > 0 {
-            if check_path(k_idx, -7, r) { return (true, Some([r, c, 0, 6])); }
-        }
+        if c == 6 && r > 0
+        && check_path(k_idx, -7, r) { return (true, Some([r, c, 0, 6])); }
 
         // 3. Bottom-Left (6,0)
         // Check West (if on row 6)
-        if r == 6 && c > 0 {
-            if check_path(k_idx, -1, c) { return (true, Some([r, c, 6, 0])); }
-        }
+        if r == 6 && c > 0
+        && check_path(k_idx, -1, c) { return (true, Some([r, c, 6, 0])); }
         // Check South (if on col 0)
-        if c == 0 && r < 6 {
-            if check_path(k_idx, 7, 6 - r) { return (true, Some([r, c, 6, 0])); }
-        }
+        if c == 0 && r < 6
+        && check_path(k_idx, 7, 6 - r) { return (true, Some([r, c, 6, 0])); }
 
         // 4. Bottom-Right (6,6)
         // Check East (if on row 6)
-        if r == 6 && c < 6 {
-            if check_path(k_idx, 1, 6 - c) { return (true, Some([r, c, 6, 6])); }
-        }
+        if r == 6 && c < 6
+        && check_path(k_idx, 1, 6 - c) { return (true, Some([r, c, 6, 6])); }
         // Check South (if on col 6)
-        if c == 6 && r < 6 {
-            if check_path(k_idx, 7, 6 - r) { return (true, Some([r, c, 6, 6])); }
-        }
+        if c == 6 && r < 6
+        && check_path(k_idx, 7, 6 - r) { return (true, Some([r, c, 6, 6])); }
 
         (false, None)
     }
@@ -1093,31 +1086,27 @@ impl GameState {
         };
 
         // 1. Top Edge (Row 0) -> Move to (0, c)
-        if (occupied & ROW_0_MASK) == 0 {
-            if check_path(k_idx, -7, r) { 
-                return (true, Some([r, c, 0, c])); 
-            }
+        if (occupied & ROW_0_MASK) == 0
+        && check_path(k_idx, -7, r) { 
+            return (true, Some([r, c, 0, c])); 
         }
 
         // 2. Bottom Edge (Row 6) -> Move to (6, c)
-        if (occupied & ROW_6_MASK) == 0 {
-            if check_path(k_idx, 7, 6 - r) { 
-                return (true, Some([r, c, 6, c])); 
-            }
+        if (occupied & ROW_6_MASK) == 0
+        && check_path(k_idx, 7, 6 - r) { 
+            return (true, Some([r, c, 6, c])); 
         }
 
         // 3. Left Edge (Col 0) -> Move to (r, 0)
-        if (occupied & COL_0_MASK) == 0 {
-            if check_path(k_idx, -1, c) { 
-                return (true, Some([r, c, r, 0])); 
-            }
+        if (occupied & COL_0_MASK) == 0
+        && check_path(k_idx, -1, c) { 
+            return (true, Some([r, c, r, 0])); 
         }
 
         // 4. Right Edge (Col 6) -> Move to (r, 6)
-        if (occupied & COL_6_MASK) == 0 {
-            if check_path(k_idx, 1, 6 - c) { 
-                return (true, Some([r, c, r, 6])); 
-            }
+        if (occupied & COL_6_MASK) == 0
+        && check_path(k_idx, 1, 6 - c) { 
+            return (true, Some([r, c, r, 6])); 
         }
 
         (false, None)
@@ -1150,7 +1139,7 @@ impl GameState {
                 Ok(coords) => {
                     // Check if the move is valid and do it.
                     if self.is_legal_move_human(&coords) {
-                        self.move_piece(&coords, &z_table, false, writer);
+                        self.move_piece(&coords, z_table, false, writer);
                         return;
                     } else {
                         continue;

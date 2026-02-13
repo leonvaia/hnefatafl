@@ -97,7 +97,7 @@ fn play_games(mode: GameMode, bot_side: char, game_count: usize, folder_name: &s
     let time = Instant::now();
     
     for i in 0..game_count {
-        let mut engine = MCTS::new(0xCAFEBABE, 200_000, SimulationType::Light);
+        let mut engine = MCTS::new(0xCAFEBABE, 50_000, SimulationType::ParallelHeavy(8));
         let file_name = format!("{}/{}.txt", folder_name, i);
         play_game(&mut engine, mode, bot_side,true, &file_name);
     }
@@ -157,8 +157,8 @@ fn play_bot_games(game_count: usize, folder_name: &str) {
     println!("{} games will be played with both sides having 200_000 iterations per move", game_count);
     let total_time = Instant::now();
     for i in 0..game_count {
-        let mut engine_white = MCTS::new(0xCAFEBABE, 200_000, SimulationType::Light);
-        let mut engine_black = MCTS::new(0xDEADBEEF, 200_000, SimulationType::Light);
+        let mut engine_white = MCTS::new(0xCAFEBABE, 100_000, SimulationType::ParallelHeavy(8));
+        let mut engine_black = MCTS::new(0xDEADBEEF, 400_000, SimulationType::ParallelHeavy(8));
 
         let file_name = format!("{}/{}.txt", folder_name, i);
 
@@ -169,8 +169,8 @@ fn play_bot_games(game_count: usize, folder_name: &str) {
     println!("Black won {} games", black_wins);
     println!("Finished {} games in {:.2}s", game_count, total_time.elapsed().as_secs_f64());
 
-    let white_iterations = if black_wins > white_wins { 400_000 } else if black_wins == white_wins { 100_000 } else { 200_000 };
-    let black_iterations = if black_wins < white_wins { 400_000 } else if black_wins == white_wins { 100_000 } else { 200_000 };
+    let white_iterations = if black_wins > white_wins { 200_000 } else if black_wins == white_wins { 100_000 } else { 200_000 };
+    let black_iterations = if black_wins < white_wins { 200_000 } else if black_wins == white_wins { 100_000 } else { 200_000 };
     black_wins = 0;
     white_wins = 0;
 
@@ -183,8 +183,8 @@ fn play_bot_games(game_count: usize, folder_name: &str) {
 
     let total_time = Instant::now();
     for i in 0..game_count {
-        let mut engine_white = MCTS::new(0xCAFEBABE, white_iterations, SimulationType::Light);
-        let mut engine_black = MCTS::new(0xDEADBEEF, black_iterations, SimulationType::Light);
+        let mut engine_white = MCTS::new(0xCAFEBABE, white_iterations, SimulationType::ParallelHeavy(8));
+        let mut engine_black = MCTS::new(0xDEADBEEF, black_iterations, SimulationType::ParallelHeavy(8));
 
         let file_name = format!("{}/{}.txt", &new_folder_name, i);
 
@@ -216,8 +216,8 @@ fn play_bot_games_parallel(thread_count: usize, game_count: usize) {
         for _ in 0..game_count {
             let white_seed = 0xCAFEBABE + (thread_id as u64 * 100);
             let black_seed = 0xDEADBEEF + (thread_id as u64 * 100);
-            let mut engine_white = MCTS::new(white_seed, white_iterations, SimulationType::Light);
-            let mut engine_black = MCTS::new(black_seed, black_iterations, SimulationType::Light);
+            let mut engine_white = MCTS::new(white_seed, white_iterations, SimulationType::ParallelHeavy(8));
+            let mut engine_black = MCTS::new(black_seed, black_iterations, SimulationType::ParallelHeavy(8));
 
             // Use your existing logic to play the game
             for i in 0..game_count {
@@ -261,8 +261,8 @@ fn play_increasing_bot_games(thread_count: usize, folder_name: &str) {
             let white_seed = 0xCAFEBABE + (thread_id as u64 * 100) + attempt;
             let black_seed = 0xDEADBEEF + (thread_id as u64 * 100) + attempt;
 
-            let mut engine_white = MCTS::new(white_seed, white_iterations, SimulationType::Light);
-            let mut engine_black = MCTS::new(black_seed, black_iterations, SimulationType::Light);
+            let mut engine_white = MCTS::new(white_seed, white_iterations, SimulationType::ParallelHeavy(8));
+            let mut engine_black = MCTS::new(black_seed, black_iterations, SimulationType::ParallelHeavy(8));
 
             // Create a unique filename for this specific attempt
             let file_name = format!("{}/trial_{}_iters_{}.txt", folder_name, thread_id, white_iterations);
@@ -373,12 +373,13 @@ fn main() {
     println!("start_row start_col end_row end_col\n");
 
     println!("type:");
+    println!("1 -> human vs bot");
     println!("2 -> human vs human");
     println!("3 -> bot vs random");
     println!("4 -> bot vs bot");
     println!("5 -> bot vs bot (increasing iterations)");
     println!("6 -> bot vs bot (threads)");
-    println!("7 -> TO DO: simulation");
+    println!("7 -> simulation comparison");
     let mut input = String::new();
     io::stdin().read_line(&mut input).unwrap();
 
@@ -427,7 +428,7 @@ fn main() {
         println!("Starting {} threads playing {} games of engine vs engine each", thread_count, game_count);
         play_bot_games_parallel(thread_count, game_count);
     } else if input.trim() == "7" {
-        let games_per_side = 1;
+        let games_per_side = 5;
         let iteration_tiers = [100_000, 200_000, 400_000];
 
         println!("Starting Comparative Benchmark Suite");
@@ -475,7 +476,7 @@ fn main() {
         }
         println!("\nAll benchmarks complete.");
     } else {
-        let mut engine = MCTS::new(0xCAFEBABE, 200_000, SimulationType::Light);
+        let mut engine = MCTS::new(0xCAFEBABE, 200_000, SimulationType::ParallelHeavy(8));
         play_game(&mut engine, mode, 'W', false, "");
     }
 }
